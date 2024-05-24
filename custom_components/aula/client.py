@@ -25,12 +25,13 @@ class Client:
     widgets = {}
     tokens = {}
 
-    def __init__(self, username, password, schoolschedule, ugeplan):
+    def __init__(self, username, password, schoolschedule, ugeplan, rawugeplan):
         self._username = username
         self._password = password
         self._session = None
         self._schoolschedule = schoolschedule
         self._ugeplan = ugeplan
+        self._rawugeplan = rawugeplan
 
     def custom_api_call(self, uri, post_data):
         csrf_token = self._session.cookies.get_dict()["Csrfp-Token"]
@@ -177,6 +178,8 @@ class Client:
             + str(self._schoolschedule)
             + ", config - ugeplaner: "
             + str(self._ugeplan)
+            + ", config - rawugeplan: "
+            + str(self._rawugeplan)
         )
 
     def get_widgets(self):
@@ -224,43 +227,54 @@ class Client:
         if not is_logged_in:
             self.login()
 
-        self._childnames = {}
+        self._childfirstnames = {}
         self._institutions = {}
         self._childuserids = []
         self._childids = []
         self._children = []
         self._institutionProfiles = []
         self._childrenFirstNamesAndUserIDs = {}
+        self._childfirstnamesanduserids = {}
+
         for institutions in self._profilecontext:
+            self._institutionProfiles.append(institutions["institutionCode"])
+
             for child in institutions["children"]:
-                self._childnames[child["id"]] = child["name"]
-                self._institutions[child["id"]] = institutions["name"]
+                child_first_name = child["name"].split()[0]
+                child["first_name"] = child_first_name
+
                 self._children.append(child)
                 self._childids.append(str(child["id"]))
                 self._childuserids.append(str(child["userId"]))
-            self._institutionProfiles.append(institutions["institutionCode"])
-        _LOGGER.debug("Child ids and names: " + str(self._childnames))
+
+                self._institutions[child["id"]] = institutions["name"]
+                self._childfirstnames[child["id"]] = child_first_name
+                self._childfirstnamesanduserids[child["userId"]] = child_first_name
+
+        _LOGGER.debug("Child ids and names: " + str(self._childfirstnames))
+        _LOGGER.debug(
+            "Child user ids and names: " + str(self._childfirstnamesanduserids)
+        )
         _LOGGER.debug("Child ids and institution names: " + str(self._institutions))
         _LOGGER.debug("Institution codes: " + str(self._institutionProfiles))
 
         self._daily_overview = {}
-        for i, child in enumerate(self._children):
+
+        for childid in self._childids:
             response = self._session.get(
-                self.apiurl
-                + "?method=presence.getDailyOverview&childIds[]="
-                + str(child["id"]),
+                self.apiurl + "?method=presence.getDailyOverview&childIds[]=" + childid,
                 verify=True,
             ).json()
+
             if len(response["data"]) > 0:
-                self.presence[str(child["id"])] = 1
-                self._daily_overview[str(child["id"])] = response["data"][0]
+                self.presence[childid] = 1
+                self._daily_overview[childid] = response["data"][0]
             else:
                 _LOGGER.debug(
-                    "Unable to retrieve presence data from Aula from child with id "
-                    + str(child["id"])
-                    + ". Some data will be missing from sensor entities."
+                    f"Unable to retrieve presence data from Aula from child with id {childid}. Some data will be missing from sensor entities."
                 )
-                self.presence[str(child["id"])] = 0
+                self.presence[childid] = 0
+
         _LOGGER.debug("Child ids and presence data status: " + str(self.presence))
 
         # Messages:
@@ -291,9 +305,9 @@ class Client:
             )
             # _LOGGER.debug("threadres "+str(threadres.text))
             if threadres.json()["status"]["code"] == 403:
-                self.message[
-                    "text"
-                ] = "Log ind på Aula med MitID for at læse denne besked."
+                self.message["text"] = (
+                    "Log ind på Aula med MitID for at læse denne besked."
+                )
                 self.message["sender"] = "Ukendt afsender"
                 self.message["subject"] = "Følsom besked"
             else:
@@ -433,9 +447,7 @@ class Client:
                         "MU Opgaver status_code " + str(ugeplaner.status_code)
                     )
                     _LOGGER.debug("MU Opgaver response " + str(ugeplaner.text))
-                    for full_name in self._childnames.items():
-                        name_parts = full_name[1].split()
-                        first_name = name_parts[0]
+                    for first_name in self._childfirstnames.items():
                         _ugep = ""
                         for i in ugeplaner.json()["opgaver"]:
                             _LOGGER.debug(
@@ -477,10 +489,7 @@ class Client:
                         "authority": "api.easyiqcloud.dk",
                     }
 
-                    for child in self._childrenFirstNamesAndUserIDs.items():
-                        userid = child[0]
-                        first_name = child[1]
-
+                    for userid, first_name in self._childfirstnamesanduserids.items():
                         _LOGGER.debug("EasyIQ headers " + str(easyiq_headers))
                         post_data = {
                             "sessionId": guardian,
@@ -502,84 +511,95 @@ class Client:
                         _LOGGER.debug(
                             "EasyIQ Opgaver response " + str(ugeplaner.json())
                         )
-                        _ugep = (
-                            "<h2>"
-                            # + ugeplaner.json()["Weekplan"]["ActivityName"]
-                            + " Uge "
-                            + week.split("-W")[1]
-                            # + ugeplaner.json()["Weekplan"]["WeekNo"]
-                            + "</h2>"
-                        )
-                        # from datetime import datetime
 
-                        def findDay(date):
-                            day, month, year = (int(i) for i in date.split(" "))
-                            dayNumber = calendar.weekday(year, month, day)
-                            days = [
-                                "Mandag",
-                                "Tirsdag",
-                                "Onsdag",
-                                "Torsdag",
-                                "Fredag",
-                                "Lørdag",
-                                "Søndag",
-                            ]
-                            return days[dayNumber]
+                        if self._rawugeplan:
+                            _ugep = ugeplaner.json()
+                        else:
+                            _ugep = (
+                                "<h2>"
+                                # + ugeplaner.json()["Weekplan"]["ActivityName"]
+                                + " Uge "
+                                + week.split("-W")[1]
+                                # + ugeplaner.json()["Weekplan"]["WeekNo"]
+                                + "</h2>"
+                            )
+                            # from datetime import datetime
 
-                        def is_correct_format(date_string, format):
-                            try:
-                                datetime.datetime.strptime(date_string, format)
-                                return True
-                            except ValueError:
-                                _LOGGER.debug(
-                                    "Could not parse timestamp: " + str(date_string)
-                                )
-                                return False
+                            def findDay(date):
+                                day, month, year = (int(i) for i in date.split(" "))
+                                dayNumber = calendar.weekday(year, month, day)
+                                days = [
+                                    "Mandag",
+                                    "Tirsdag",
+                                    "Onsdag",
+                                    "Torsdag",
+                                    "Fredag",
+                                    "Lørdag",
+                                    "Søndag",
+                                ]
+                                return days[dayNumber]
 
-                        for i in ugeplaner.json()["Events"]:
-                            if is_correct_format(i["start"], "%Y/%m/%d %H:%M"):
-                                _LOGGER.debug("No Event")
-                                start_datetime = datetime.datetime.strptime(
-                                    i["start"], "%Y/%m/%d %H:%M"
-                                )
-                                _LOGGER.debug(start_datetime)
-                                end_datetime = datetime.datetime.strptime(
-                                    i["end"], "%Y/%m/%d %H:%M"
-                                )
-                                if start_datetime.date() == end_datetime.date():
-                                    formatted_day = findDay(
-                                        start_datetime.strftime("%d %m %Y")
+                            def is_correct_format(date_string, format):
+                                try:
+                                    datetime.datetime.strptime(date_string, format)
+                                    return True
+                                except ValueError:
+                                    _LOGGER.debug(
+                                        "Could not parse timestamp: " + str(date_string)
                                     )
-                                    formatted_start = start_datetime.strftime(" %H:%M")
-                                    formatted_end = end_datetime.strftime("- %H:%M")
-                                    dresult = f"{formatted_day} {formatted_start} {formatted_end}"
+                                    return False
+
+                            for i in ugeplaner.json()["Events"]:
+                                if is_correct_format(i["start"], "%Y/%m/%d %H:%M"):
+                                    _LOGGER.debug("No Event")
+                                    start_datetime = datetime.datetime.strptime(
+                                        i["start"], "%Y/%m/%d %H:%M"
+                                    )
+                                    _LOGGER.debug(start_datetime)
+                                    end_datetime = datetime.datetime.strptime(
+                                        i["end"], "%Y/%m/%d %H:%M"
+                                    )
+                                    if start_datetime.date() == end_datetime.date():
+                                        formatted_day = findDay(
+                                            start_datetime.strftime("%d %m %Y")
+                                        )
+                                        formatted_start = start_datetime.strftime(
+                                            " %H:%M"
+                                        )
+                                        formatted_end = end_datetime.strftime("- %H:%M")
+                                        dresult = f"{formatted_day} {formatted_start} {formatted_end}"
+                                    else:
+                                        formatted_start = findDay(
+                                            start_datetime.strftime("%d %m %Y")
+                                        )
+                                        formatted_end = findDay(
+                                            end_datetime.strftime("%d %m %Y")
+                                        )
+                                        dresult = f"{formatted_start} {formatted_end}"
+                                    _ugep = _ugep + "<br><b>" + dresult + "</b><br>"
+                                    if i["itemType"] == "5":
+                                        _ugep = (
+                                            _ugep
+                                            + "<br><b>"
+                                            + str(i["title"])
+                                            + "</b><br>"
+                                        )
+                                    else:
+                                        _ugep = (
+                                            _ugep
+                                            + "<br><b>"
+                                            + str(i["ownername"])
+                                            + "</b><br>"
+                                        )
+                                    _ugep = _ugep + str(i["description"]) + "<br>"
                                 else:
-                                    formatted_start = findDay(
-                                        start_datetime.strftime("%d %m %Y")
-                                    )
-                                    formatted_end = findDay(
-                                        end_datetime.strftime("%d %m %Y")
-                                    )
-                                    dresult = f"{formatted_start} {formatted_end}"
-                                _ugep = _ugep + "<br><b>" + dresult + "</b><br>"
-                                if i["itemType"] == "5":
-                                    _ugep = (
-                                        _ugep + "<br><b>" + str(i["title"]) + "</b><br>"
-                                    )
-                                else:
-                                    _ugep = (
-                                        _ugep
-                                        + "<br><b>"
-                                        + str(i["ownername"])
-                                        + "</b><br>"
-                                    )
-                                _ugep = _ugep + str(i["description"]) + "<br>"
-                            else:
-                                _LOGGER.debug("None")
+                                    _LOGGER.debug("None")
+
                         if thisnext == "this":
                             self.ugep_attr[first_name] = _ugep
                         elif thisnext == "next":
                             self.ugepnext_attr[first_name] = _ugep
+
                         _LOGGER.debug("EasyIQ result: " + str(_ugep))
 
                 if "0062" in self.widgets:

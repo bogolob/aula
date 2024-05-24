@@ -10,18 +10,24 @@ from homeassistant.helpers.entity_registry import (
 )
 import voluptuous as vol
 
-from .const import CONF_SCHOOLSCHEDULE, CONF_UGEPLAN, DOMAIN
+from .const import CONF_SCHOOLSCHEDULE, CONF_UGEPLAN, CONF_RAWUGEPLAN, DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
 AUTH_SCHEMA = vol.Schema(
     {
-            vol.Required(CONF_USERNAME): cv.string, vol.Required(CONF_PASSWORD): cv.string, vol.Optional("schoolschedule"): cv.boolean,vol.Optional("ugeplan"): cv.boolean
+        vol.Required(CONF_USERNAME): cv.string,
+        vol.Required(CONF_PASSWORD): cv.string,
+        vol.Optional("schoolschedule"): cv.boolean,
+        vol.Optional("ugeplan"): cv.boolean,
+        vol.Optional("rawugeplan"): cv.boolean,
     }
 )
 
+
 class AulaCustomConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Aula Custom config flow."""
+
     data: Optional[Dict[str, Any]]
 
     async def async_step_user(self, user_input: Optional[Dict[str, Any]] = None):
@@ -39,12 +45,17 @@ class AulaCustomConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 self.data[CONF_UGEPLAN] = False
             else:
                 self.data[CONF_UGEPLAN] = user_input.get("ugeplan")
+            if user_input.get("rawugeplan") == None:
+                self.data[CONF_RAWUGEPLAN] = False
+            else:
+                self.data[CONF_UGEPLAN] = user_input.get("rawugeplan")
             # This will log password in plain text: _LOGGER.debug(self.data)
             return self.async_create_entry(title="Aula", data=self.data)
 
         return self.async_show_form(
             step_id="user", data_schema=AUTH_SCHEMA, errors=errors
         )
+
 
 # reconfiguration (options flow), to be implemented
 #    @staticmethod
@@ -73,7 +84,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         for entity_id in repo_map.keys():
             # Unregister from HA
             _LOGGER.debug(entity_id)
-            #entity_registry.async_remove(entity_id)
+            # entity_registry.async_remove(entity_id)
         return await self.async_step_user()
 
     async def async_step_user(self, user_input=None):
@@ -89,6 +100,4 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
 
     async def _update_options(self):
         """Update config entry options."""
-        return self.async_create_entry(
-            title="Aula", data=self.options
-        )
+        return self.async_create_entry(title="Aula", data=self.options)

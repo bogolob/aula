@@ -18,7 +18,8 @@
       "options": {
         "data": {
           "schoolschedule": "Add school schedules as calendar entities?",
-          "ugeplan": "Add ugeplaner as sensor attributes?"
+          "ugeplan": "Add ugeplaner as sensor attributes?",
+          "rawugeplan": "Use raw JSON for ugeplaner data?"
         },
         "description": "",
         "title": "Options"
@@ -41,7 +42,8 @@
       "options": {
         "data": {
           "schoolschedule": "Add school schedules as calendar entities?",
-          "ugeplan": "Add ugeplaner as sensor attributes?"
+          "ugeplan": "Add ugeplaner as sensor attributes?",
+          "rawugeplan": "Use raw JSON for ugeplaner data?"
         },
         "description": "",
         "title": "Options"

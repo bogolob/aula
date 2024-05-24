@@ -1,5 +1,6 @@
 from .const import DOMAIN
 import logging
+import json
 from datetime import datetime, timedelta
 from homeassistant.helpers.entity import Entity
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
@@ -22,6 +23,7 @@ from homeassistant.const import CONF_USERNAME, CONF_PASSWORD
 from .const import (
     CONF_SCHOOLSCHEDULE,
     CONF_UGEPLAN,
+    CONF_RAWUGEPLAN,
     DOMAIN,
 )
 
@@ -52,6 +54,7 @@ async def async_setup_entry(
         config[CONF_PASSWORD],
         config[CONF_SCHOOLSCHEDULE],
         config[CONF_UGEPLAN],
+        config[CONF_RAWUGEPLAN],
     )
     hass.data[DOMAIN]["client"] = client
 
@@ -98,10 +101,17 @@ async def async_setup_entry(
     ####
 
     global ugeplan
+    global rawugeplan
     if config[CONF_UGEPLAN]:
         ugeplan = True
     else:
         ugeplan = False
+
+    if config[CONF_RAWUGEPLAN]:
+        rawugeplan = True
+    else:
+        rawugeplan = False
+
     async_add_entities(entities, update_before_add=True)
 
     def custom_api_call_service(call: ServiceCall) -> ServiceResponse:
@@ -129,7 +139,7 @@ class AulaSensor(Entity):
 
     @property
     def name(self):
-        childname = self._client._childnames[self._child["id"]].split()[0]
+        childname = self._client._childfirstnames[self._child["id"]]
         institution = self._client._institutions[self._child["id"]]
         return institution + " " + childname
 
@@ -201,27 +211,98 @@ class AulaSensor(Entity):
             if "0062" in self._client.widgets:
                 try:
                     attributes["huskelisten"] = self._client.huskeliste[
-                        self._child["name"].split()[0]
+                        self._child["first_name"]
                     ]
                 except:
                     attributes["huskelisten"] = "Not available"
+
             try:
-                attributes["ugeplan"] = self._client.ugep_attr[
-                    self._child["name"].split()[0]
+                child_ugeplan = self._client.ugep_attr[self._child["first_name"]]
+            except:
+                child_ugeplan = None
+
+            try:
+                child_ugeplan_next = self._client.ugepnext_attr[
+                    self._child["first_name"]
                 ]
             except:
-                attributes["ugeplan"] = "Not available"
-            try:
-                attributes["ugeplan_next"] = self._client.ugepnext_attr[
-                    self._child["name"].split()[0]
-                ]
-            except:
-                attributes["ugeplan_next"] = "Not available"
+                child_ugeplan_next = None
                 _LOGGER.debug(
                     "Could not get ugeplan for next week for child "
-                    + str(self._child["name"].split()[0])
+                    + str(self._child["first_name"])
                     + ". Perhaps not available yet."
                 )
+
+            if rawugeplan and "0001" in self._client.widgets:
+
+                def parse_easyiq_ugeplan(ugeplan_json: dict, varname: str):
+                    attribute_prefix = f"easyiq_{varname}"
+
+                    try:
+                        attributes[f"{attribute_prefix}_fromDate"] = (
+                            datetime.fromisoformat(ugeplan_json["fromDate"])
+                        )
+                        attributes[f"{attribute_prefix}_toDate"] = (
+                            datetime.fromisoformat(ugeplan_json["toDate"])
+                        )
+                        attributes[f"{attribute_prefix}_weekplan"] = (
+                            {
+                                "activity_name": ugeplan_json["WeekPlan"][
+                                    "ActivityName"
+                                ],
+                                "year": ugeplan_json["WeekPlan"]["Year"],
+                                "week_number": ugeplan_json["WeekPlan"]["WeekNo"],
+                                "text": ugeplan_json["WeekPlan"]["Text"],
+                            }
+                            if ("WeekPlan" in ugeplan_json)
+                            else "Not available"
+                        )
+                        attributes[f"{attribute_prefix}_events"] = (
+                            sorted(
+                                [
+                                    {
+                                        "start": datetime.strptime(
+                                            event["start"], "%Y/%m/%d %H:%M"
+                                        ),
+                                        "end": datetime.strptime(
+                                            event["end"], "%Y/%m/%d %H:%M"
+                                        ),
+                                        "weekday": datetime.strptime(
+                                            event["start"], "%Y/%m/%d %H:%M"
+                                        ).weekday(),
+                                        "description": event["description"],
+                                        "courses": event["courses"],
+                                        "activities": event["activities"],
+                                    }
+                                    for event in ugeplan_json["Events"]
+                                ],
+                                key=lambda x: x["start"],
+                            )
+                            if ("Events" in ugeplan_json)
+                            else "Not available"
+                        )
+
+                    except Exception as e:
+                        _LOGGER.error(f"Error parsing EasyIQ JSON: {e}")
+
+                        attributes[f"{attribute_prefix}_fromDate"] = datetime.min
+                        attributes[f"{attribute_prefix}_toDate"] = datetime.min
+                        attributes[f"{attribute_prefix}_weekplan"] = "Not available"
+                        attributes[f"{attribute_prefix}_events"] = "Not available"
+
+                if child_ugeplan:
+                    parse_easyiq_ugeplan(child_ugeplan, "ugeplan")
+
+                if child_ugeplan_next:
+                    parse_easyiq_ugeplan(child_ugeplan_next, "ugeplan_next")
+            else:
+                attributes["ugeplan"] = (
+                    child_ugeplan if child_ugeplan else "Not available"
+                )
+                attributes["ugeplan_next"] = (
+                    child_ugeplan_next if child_ugeplan_next else "Not available"
+                )
+
         if self._client.presence[str(self._child["id"])] == 1:
             for attribute in fields:
                 if attribute == "exitTime" and daily_info[attribute] == "23:59:00":
