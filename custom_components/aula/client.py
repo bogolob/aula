@@ -237,7 +237,7 @@ class Client:
         self._childfirstnamesanduserids = {}
 
         for profile in self._profiles:
-            self._institutionProfiles.append(
+            self._institutionProfiles.update(
                 [
                     str(institutioncode["institutionCode"])
                     for institutioncode in profile["institutionProfiles"]
@@ -486,7 +486,7 @@ class Client:
                     csrf_token = self._session.cookies.get_dict()["Csrfp-Token"]
 
                     easyiq_headers = {
-                        "x-aula-institutionfilter": str(self._institutionProfiles[0]),
+                        "x-aula-institutionfilter": ",".join(self._institutionProfiles),
                         "x-aula-userprofile": "guardian",
                         "Authorization": token,
                         "accept": "application/json",
@@ -502,7 +502,7 @@ class Client:
                             "sessionId": guardian,
                             "currentWeekNr": week,
                             "userProfile": "guardian",
-                            "institutionFilter": self._institutionProfiles,
+                            "institutionFilter": list(self._institutionProfiles),
                             "childFilter": [userid],
                         }
                         _LOGGER.debug("EasyIQ post data " + str(post_data))
