@@ -171,7 +171,7 @@ class Client:
         self._profilecontext = self._session.get(
             self.apiurl + "?method=profiles.getProfileContext&portalrole=guardian",
             verify=True,
-        ).json()["data"]["institutions"]
+        ).json()["data"]["institutionProfile"]["relations"]
         _LOGGER.debug("LOGIN: " + str(success))
         _LOGGER.debug(
             "Config - schoolschedule: "
@@ -185,7 +185,7 @@ class Client:
     def get_widgets(self):
         detected_widgets = self._session.get(
             self.apiurl + "?method=profiles.getProfileContext", verify=True
-        ).json()["data"]["moduleWidgetConfiguration"]["widgetConfigurations"]
+        ).json()["data"]["pageConfiguration"]["widgetConfigurations"]
         for widget in detected_widgets:
             widgetid = str(widget["widget"]["widgetId"])
             widgetname = widget["widget"]["name"]
@@ -232,14 +232,19 @@ class Client:
         self._childuserids = []
         self._childids = []
         self._children = []
-        self._institutionProfiles = []
+        self._institutionProfiles = set()
         self._childrenFirstNamesAndUserIDs = {}
         self._childfirstnamesanduserids = {}
 
-        for institutions in self._profilecontext:
-            self._institutionProfiles.append(institutions["institutionCode"])
+        for profile in self._profiles:
+            self._institutionProfiles.append(
+                [
+                    str(institutioncode["institutionCode"])
+                    for institutioncode in profile["institutionProfiles"]
+                ]
+            )
 
-            for child in institutions["children"]:
+            for child in profile["children"]:
                 child_first_name = child["name"].split()[0]
                 child["first_name"] = child_first_name
 
@@ -247,7 +252,9 @@ class Client:
                 self._childids.append(str(child["id"]))
                 self._childuserids.append(str(child["userId"]))
 
-                self._institutions[child["id"]] = institutions["name"]
+                self._institutions[child["id"]] = child["institutionProfile"][
+                    "institutionName"
+                ]
                 self._childfirstnames[child["id"]] = child_first_name
                 self._childfirstnamesanduserids[child["userId"]] = child_first_name
 
