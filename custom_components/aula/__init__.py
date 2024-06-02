@@ -5,6 +5,7 @@ Based on https://github.com/JBoye/HA-Aula
 from homeassistant.loader import async_get_integration
 import asyncio
 from homeassistant import config_entries, core
+from homeassistant.helpers.entity_platform import Plator
 from .const import DOMAIN, STARTUP
 import logging
 

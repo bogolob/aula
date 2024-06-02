@@ -14,18 +14,148 @@ from .const import (
 )
 from homeassistant.exceptions import ConfigEntryNotReady
 
+from typing import Any, Dict, NewType, Optional, Self, Tuple, Union
+from dataclasses import dataclass
+from enum import IntEnum, StrEnum
+from itertools import islice
+
 _LOGGER = logging.getLogger(__name__)
+
+AulaChildId = NewType("AulaChildId", str)
+AulaChildUserId = NewType("AulaChildUserId", str)
+AulaChildFirstName = NewType("AulaChildFirstName", str)
+AulaInstitutionName = NewType("AulaInstitutionName", str)
+
+
+@dataclass
+class Child:
+    id: AulaChildId
+    user_id: AulaChildUserId
+    first_name: AulaChildFirstName
+    institution_name: AulaInstitutionName
+
+    @staticmethod
+    def from_json(json_child: dict) -> Self:
+        return Child(
+            str(json_child["id"]),
+            str(json_child["userId"]),
+            str(json_child["name"]).split()[0],
+            str(json_child["institutionProfile"]["institutionName"]),
+        )
+
+
+class PresenceType(IntEnum):
+    IKKE_KOMMET = 0
+    SYG = 1
+    FERIE_FRI = 2
+    KOMMET_TIL_STEDE = 3
+    PAA_TUR = 4
+    SOVER = 5
+    PRESENCE_6 = 6
+    PRESENCE_7 = 7
+    HENTET_GAAET = 8
+    PRESENCE_9 = 9
+    PRESENCE_10 = 10
+    PRESENCE_11 = 11
+    PRESENCE_12 = 12
+    PRESENCE_13 = 13
+    PRESENCE_14 = 14
+    PRESENCE_15 = 15
+
+    def to_string(self) -> str:
+        match self:
+            case PresenceType.IKKE_KOMMET:
+                return "Ikke kommet"
+            case PresenceType.SYG:
+                return "Syg"
+            case PresenceType.FERIE_FRI:
+                return "Ferie/Fri"
+            case PresenceType.KOMMET_TIL_STEDE:
+                return "Kommet/Til stede"
+            case PresenceType.PAA_TUR:
+                return "På tur"
+            case PresenceType.SOVER:
+                return "Sover"
+            case PresenceType.HENTET_GAAET:
+                return "Gået"
+
+        return str(self)
+
+
+class MessageType(StrEnum):
+    MESSAGE = "Message"
+
+
+@dataclass
+class Message:
+    message_type: MessageType
+    text: str
+    sender: str
+
+    @staticmethod
+    def from_json(json_message: str) -> Self:
+        text: str
+        if not "text" in json_message:
+            text = "intet indhold..."
+            _LOGGER.warning("There is an unread message, but we cannot get the text.")
+        else:
+            text = (
+                json_message["text"]["html"]
+                if "html" in json_message["text"]
+                else json_message["text"]
+            )
+
+        return Message(
+            json_message["messageType"],
+        )
+
+
+class MessageThread:
+    thread_id: str
+    subject: str
+    messages: list[Message]
+
+    @staticmethod
+    def from_json(json_thread: str, top: int = None) -> Self:
+        new_thread: MessageThread = MessageThread()
+        new_thread.subject = json_thread["subject"] if "subject" in json_thread else ""
+
+        json_messages = islice(
+            filter(
+                lambda message: ("messageType" in message)
+                and (message["messageType"] == MessageType.MESSAGE),
+                json_thread["messages"],
+            ),
+            top,
+        )
+
+        new_thread.messages = [
+            Message.from_json(json_message) for json_message in json_messages
+        ]
+
+        return new_thread
 
 
 class Client:
-    huskeliste = {}
-    presence = {}
-    ugep_attr = {}
-    ugepnext_attr = {}
-    widgets = {}
-    tokens = {}
+    children: list[Child]
+    unread_message_count: int
+    unread_message_thread: MessageThread
+    presence: Dict[AulaChildId, Union[None, dict]] = {}
+    widgets: dict[str, str] = {}
 
-    def __init__(self, username, password, schoolschedule, ugeplan, rawugeplan):
+    huskeliste: dict = {}
+    ugep_attr: dict = {}
+    ugepnext_attr: dict = {}
+    tokens: dict = {}
+
+    def __init__(
+        self,
+        username: str,
+        password: str,
+        schoolschedule: str,
+        ugeplan: str,
+        rawugeplan: str,
+    ) -> None:
         self._username = username
         self._password = password
         self._session = None
@@ -33,11 +163,11 @@ class Client:
         self._ugeplan = ugeplan
         self._rawugeplan = rawugeplan
 
-    def custom_api_call(self, uri, post_data):
+    def custom_api_call(self, uri: str, post_data: Optional[str] = None) -> Any:
         csrf_token = self._session.cookies.get_dict()["Csrfp-Token"]
         headers = {"csrfp-token": csrf_token, "content-type": "application/json"}
         _LOGGER.debug("custom_api_call: Making API call to " + self.apiurl + uri)
-        if post_data == 0:
+        if post_data == None or post_data == "":
             response = self._session.get(
                 self.apiurl + uri, headers=headers, verify=True
             )
@@ -63,7 +193,7 @@ class Client:
             res = {"raw_response": response.text}
         return res
 
-    def login(self):
+    def login(self) -> None:
         _LOGGER.debug("Logging in")
         self._session = requests.Session()
         headers = {
@@ -192,7 +322,7 @@ class Client:
             self.widgets[widgetid] = widgetname
         _LOGGER.debug("Widgets found: " + str(self.widgets))
 
-    def get_token(self, widgetid, mock=False):
+    def get_token(self, widgetid, mock=False) -> Tuple[str, datetime.datetime]:
         if widgetid in self.tokens:
             token, timestamp = self.tokens[widgetid]
             current_time = datetime.datetime.now(pytz.utc)
@@ -212,9 +342,7 @@ class Client:
         self.tokens[widgetid] = (token, datetime.datetime.now(pytz.utc))
         return token
 
-    ###
-
-    def update_data(self):
+    def update_data(self) -> None:
         is_logged_in = False
         if self._session:
             response = self._session.get(
@@ -227,14 +355,9 @@ class Client:
         if not is_logged_in:
             self.login()
 
-        self._childfirstnames = {}
         self._institutions = {}
-        self._childuserids = []
-        self._childids = []
-        self._children = []
+        self.children = []
         self._institutionProfiles = set()
-        self._childrenFirstNamesAndUserIDs = {}
-        self._childfirstnamesanduserids = {}
 
         for profile in self._profiles:
             self._institutionProfiles.update(
@@ -244,104 +367,17 @@ class Client:
                 ]
             )
 
-            for child in profile["children"]:
-                child_first_name = child["name"].split()[0]
-                child["first_name"] = child_first_name
+            self.children.update(
+                [Child.from_json(child) for child in profile["children"]]
+            )
 
-                self._children.append(child)
-                self._childids.append(str(child["id"]))
-                self._childuserids.append(str(child["userId"]))
-
-                self._institutions[child["id"]] = child["institutionProfile"][
-                    "institutionName"
-                ]
-                self._childfirstnames[child["id"]] = child_first_name
-                self._childfirstnamesanduserids[child["userId"]] = child_first_name
-
-        _LOGGER.debug("Child ids and names: " + str(self._childfirstnames))
-        _LOGGER.debug(
-            "Child user ids and names: " + str(self._childfirstnamesanduserids)
-        )
-        _LOGGER.debug("Child ids and institution names: " + str(self._institutions))
+        _LOGGER.debug("Children: " + str(self._children))
         _LOGGER.debug("Institution codes: " + str(self._institutionProfiles))
 
-        self._daily_overview = {}
+        self.build_children_indexes()
 
-        for childid in self._childids:
-            response = self._session.get(
-                self.apiurl + "?method=presence.getDailyOverview&childIds[]=" + childid,
-                verify=True,
-            ).json()
-
-            if len(response["data"]) > 0:
-                self.presence[childid] = 1
-                self._daily_overview[childid] = response["data"][0]
-            else:
-                _LOGGER.debug(
-                    f"Unable to retrieve presence data from Aula from child with id {childid}. Some data will be missing from sensor entities."
-                )
-                self.presence[childid] = 0
-
-        _LOGGER.debug("Child ids and presence data status: " + str(self.presence))
-
-        # Messages:
-        mesres = self._session.get(
-            self.apiurl
-            + "?method=messaging.getThreads&sortOn=date&orderDirection=desc&page=0",
-            verify=True,
-        )
-        # _LOGGER.debug("mesres "+str(mesres.text))
-        self.unread_messages = 0
-        unread = 0
-        self.message = {}
-        for mes in mesres.json()["data"]["threads"]:
-            if not mes["read"]:
-                # self.unread_messages = 1
-                unread = 1
-                threadid = mes["id"]
-                break
-        # if self.unread_messages == 1:
-        if unread == 1:
-            # _LOGGER.debug("tid "+str(threadid))
-            threadres = self._session.get(
-                self.apiurl
-                + "?method=messaging.getMessagesForThread&threadId="
-                + str(threadid)
-                + "&page=0",
-                verify=True,
-            )
-            # _LOGGER.debug("threadres "+str(threadres.text))
-            if threadres.json()["status"]["code"] == 403:
-                self.message["text"] = (
-                    "Log ind på Aula med MitID for at læse denne besked."
-                )
-                self.message["sender"] = "Ukendt afsender"
-                self.message["subject"] = "Følsom besked"
-            else:
-                for message in threadres.json()["data"]["messages"]:
-                    if message["messageType"] == "Message":
-                        try:
-                            self.message["text"] = message["text"]["html"]
-                        except:
-                            try:
-                                self.message["text"] = message["text"]
-                            except:
-                                self.message["text"] = "intet indhold..."
-                                _LOGGER.warning(
-                                    "There is an unread message, but we cannot get the text."
-                                )
-                        try:
-                            self.message["sender"] = message["sender"]["fullName"]
-                        except:
-                            self.message["sender"] = "Ukendt afsender"
-                        try:
-                            self.message["subject"] = threadres.json()["data"][
-                                "subject"
-                            ]
-                        except:
-                            self.message["subject"] = ""
-                        self.unread_messages = 1
-                        break
+        self.load_presence()
+        self.load_messages()
 
         # Calendar:
         if self._schoolschedule == True:
@@ -409,366 +445,402 @@ class Client:
 
             def ugeplan(week, thisnext):
                 if "0029" in self.widgets and "0030" not in self.widgets:
-                    token = self.get_token("0029")
-                    get_payload = (
-                        "/ugebrev?assuranceLevel=2&childFilter="
-                        + childUserIds
-                        + "&currentWeekNumber="
-                        + week
-                        + "&isMobileApp=false&placement=narrow&sessionUUID="
-                        + guardian
-                        + "&userProfile=guardian"
-                    )
-                    ugeplaner = requests.get(
-                        MIN_UDDANNELSE_API + get_payload,
-                        headers={"Authorization": token, "accept": "application/json"},
-                        verify=True,
-                    )
-                    # _LOGGER.debug("ugeplaner status_code "+str(ugeplaner.status_code))
-                    # _LOGGER.debug("ugeplaner response "+str(ugeplaner.text))
-                    for person in ugeplaner.json()["personer"]:
-                        ugeplan = person["institutioner"][0]["ugebreve"][0]["indhold"]
-                        if thisnext == "this":
-                            self.ugep_attr[person["navn"].split()[0]] = ugeplan
-                        elif thisnext == "next":
-                            self.ugepnext_attr[person["navn"].split()[0]] = ugeplan
+                    self.load_ugeplan_minuddannelse_for_week(guardian, week, thisnext)
 
                 if "0030" in self.widgets:
-                    _LOGGER.debug("In the MU Opgaver flow")
-                    token = self.get_token("0030")
-                    get_payload = (
-                        "/opgaveliste?assuranceLevel=2&childFilter="
-                        + childUserIds
-                        + "&currentWeekNumber="
-                        + week
-                        + "&isMobileApp=false&placement=narrow&sessionUUID="
-                        + guardian
-                        + "&userProfile=guardian"
-                    )
-                    ugeplaner = requests.get(
-                        MIN_UDDANNELSE_API + get_payload,
-                        headers={"Authorization": token, "accept": "application/json"},
-                        verify=True,
-                    )
-                    _LOGGER.debug(
-                        "MU Opgaver status_code " + str(ugeplaner.status_code)
-                    )
-                    _LOGGER.debug("MU Opgaver response " + str(ugeplaner.text))
-                    for first_name in self._childfirstnames.items():
-                        _ugep = ""
-                        for i in ugeplaner.json()["opgaver"]:
-                            _LOGGER.debug(
-                                "i kuvertnavn split " + str(i["kuvertnavn"].split()[0])
-                            )
-                            _LOGGER.debug("first_name " + first_name)
-                            if i["kuvertnavn"].split()[0] == first_name:
-                                _ugep = _ugep + "<h2>" + i["title"] + "</h2>"
-                                _ugep = _ugep + "<h3>" + i["kuvertnavn"] + "</h3>"
-                                _ugep = _ugep + "Ugedag: " + i["ugedag"] + "<br>"
-                                _ugep = _ugep + "Type: " + i["opgaveType"] + "<br>"
-                                for h in i["hold"]:
-                                    _ugep = _ugep + "Hold: " + h["navn"] + "<br>"
-                                try:
-                                    _ugep = _ugep + "Forløb: " + i["forloeb"]["navn"]
-                                except:
-                                    _LOGGER.debug("Did not find forloeb key: " + str(i))
-                        if thisnext == "this":
-                            self.ugep_attr[first_name] = _ugep
-                        elif thisnext == "next":
-                            self.ugepnext_attr[first_name] = _ugep
-                        _LOGGER.debug("MU Opgaver result: " + str(_ugep))
+                    self.load_ugeplan_mu_opgaver_for_week(guardian, week, thisnext)
 
                 if "0001" in self.widgets:
-                    import calendar
-
-                    _LOGGER.debug("In the EasyIQ flow")
-                    token = self.get_token("0001")
-                    csrf_token = self._session.cookies.get_dict()["Csrfp-Token"]
-
-                    easyiq_headers = {
-                        "x-aula-institutionfilter": ",".join(self._institutionProfiles),
-                        "x-aula-userprofile": "guardian",
-                        "Authorization": token,
-                        "accept": "application/json",
-                        "csrfp-token": csrf_token,
-                        "origin": "https://www.aula.dk",
-                        "referer": "https://www.aula.dk/",
-                        "authority": "api.easyiqcloud.dk",
-                    }
-
-                    for userid, first_name in self._childfirstnamesanduserids.items():
-                        _LOGGER.debug("EasyIQ headers " + str(easyiq_headers))
-                        post_data = {
-                            "sessionId": guardian,
-                            "currentWeekNr": week,
-                            "userProfile": "guardian",
-                            "institutionFilter": list(self._institutionProfiles),
-                            "childFilter": [userid],
-                        }
-                        _LOGGER.debug("EasyIQ post data " + str(post_data))
-                        ugeplaner = requests.post(
-                            EASYIQ_API + "/weekplaninfo",
-                            json=post_data,
-                            headers=easyiq_headers,
-                            verify=True,
-                        )
-                        # _LOGGER.debug(
-                        #    "EasyIQ Opgaver status_code " + str(ugeplaner.status_code)
-                        # )
-                        _LOGGER.debug(
-                            "EasyIQ Opgaver response " + str(ugeplaner.json())
-                        )
-
-                        if self._rawugeplan:
-                            _ugep = ugeplaner.json()
-                        else:
-                            _ugep = (
-                                "<h2>"
-                                # + ugeplaner.json()["Weekplan"]["ActivityName"]
-                                + " Uge "
-                                + week.split("-W")[1]
-                                # + ugeplaner.json()["Weekplan"]["WeekNo"]
-                                + "</h2>"
-                            )
-                            # from datetime import datetime
-
-                            def findDay(date):
-                                day, month, year = (int(i) for i in date.split(" "))
-                                dayNumber = calendar.weekday(year, month, day)
-                                days = [
-                                    "Mandag",
-                                    "Tirsdag",
-                                    "Onsdag",
-                                    "Torsdag",
-                                    "Fredag",
-                                    "Lørdag",
-                                    "Søndag",
-                                ]
-                                return days[dayNumber]
-
-                            def is_correct_format(date_string, format):
-                                try:
-                                    datetime.datetime.strptime(date_string, format)
-                                    return True
-                                except ValueError:
-                                    _LOGGER.debug(
-                                        "Could not parse timestamp: " + str(date_string)
-                                    )
-                                    return False
-
-                            for i in ugeplaner.json()["Events"]:
-                                if is_correct_format(i["start"], "%Y/%m/%d %H:%M"):
-                                    _LOGGER.debug("No Event")
-                                    start_datetime = datetime.datetime.strptime(
-                                        i["start"], "%Y/%m/%d %H:%M"
-                                    )
-                                    _LOGGER.debug(start_datetime)
-                                    end_datetime = datetime.datetime.strptime(
-                                        i["end"], "%Y/%m/%d %H:%M"
-                                    )
-                                    if start_datetime.date() == end_datetime.date():
-                                        formatted_day = findDay(
-                                            start_datetime.strftime("%d %m %Y")
-                                        )
-                                        formatted_start = start_datetime.strftime(
-                                            " %H:%M"
-                                        )
-                                        formatted_end = end_datetime.strftime("- %H:%M")
-                                        dresult = f"{formatted_day} {formatted_start} {formatted_end}"
-                                    else:
-                                        formatted_start = findDay(
-                                            start_datetime.strftime("%d %m %Y")
-                                        )
-                                        formatted_end = findDay(
-                                            end_datetime.strftime("%d %m %Y")
-                                        )
-                                        dresult = f"{formatted_start} {formatted_end}"
-                                    _ugep = _ugep + "<br><b>" + dresult + "</b><br>"
-                                    if i["itemType"] == "5":
-                                        _ugep = (
-                                            _ugep
-                                            + "<br><b>"
-                                            + str(i["title"])
-                                            + "</b><br>"
-                                        )
-                                    else:
-                                        _ugep = (
-                                            _ugep
-                                            + "<br><b>"
-                                            + str(i["ownername"])
-                                            + "</b><br>"
-                                        )
-                                    _ugep = _ugep + str(i["description"]) + "<br>"
-                                else:
-                                    _LOGGER.debug("None")
-
-                        if thisnext == "this":
-                            self.ugep_attr[first_name] = _ugep
-                        elif thisnext == "next":
-                            self.ugepnext_attr[first_name] = _ugep
-
-                        _LOGGER.debug("EasyIQ result: " + str(_ugep))
+                    self.load_ugeplan_easyiq_for_week(guardian, week, thisnext)
 
                 if "0062" in self.widgets:
-                    _LOGGER.debug("In the Huskelisten flow...")
-                    token = self.get_token("0062", False)
-                    huskelisten_headers = {
-                        "Accept": "application/json, text/plain, */*",
-                        "Accept-Encoding": "gzip, deflate, br",
-                        "Accept-Language": "en-US,en;q=0.9,da;q=0.8",
-                        "Aula-Authorization": token,
-                        "Origin": "https://www.aula.dk",
-                        "Referer": "https://www.aula.dk/",
-                        "Sec-Fetch-Dest": "empty",
-                        "Sec-Fetch-Mode": "cors",
-                        "Sec-Fetch-Site": "cross-site",
-                        "User-Agent": "Mozilla/5.0 (X11; CrOS x86_64 15183.51.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36",
-                        "zone": "Europe/Copenhagen",
-                    }
+                    self.load_ugeplan_huskelisten_for_week(guardian, week, thisnext)
 
-                    children = "&children=".join(self._childuserids)
-                    institutions = "&institutions=".join(self._institutionProfiles)
-                    timedelta = datetime.datetime.now() + datetime.timedelta(days=180)
-                    From = datetime.datetime.now().strftime("%Y-%m-%d")
-                    dueNoLaterThan = timedelta.strftime("%Y-%m-%d")
-                    get_payload = (
-                        "/reminders/v1?children="
-                        + children
-                        + "&from="
-                        + From
-                        + "&dueNoLaterThan="
-                        + dueNoLaterThan
-                        + "&widgetVersion=1.10&userProfile=guardian&sessionId="
-                        + self._username
-                        + "&institutions="
-                        + institutions
-                    )
-                    _LOGGER.debug(
-                        "Huskelisten get_payload: " + SYSTEMATIC_API + get_payload
-                    )
-                    #
-                    mock_huskelisten = 0
-                    #
-                    if mock_huskelisten == 1:
-                        _LOGGER.warning("Using mock data for Huskelisten.")
-                        mock_huskelisten = '[{"userName":"Emilie efternavn","userId":164625,"courseReminders":[],"assignmentReminders":[],"teamReminders":[{"id":76169,"institutionName":"Holme Skole","institutionId":183,"dueDate":"2022-11-29T23:00:00Z","teamId":65240,"teamName":"2A","reminderText":"Onsdagslektie: Matematikfessor.dk: Sænk skibet med plus.","createdBy":"Peter ","lastEditBy":"Peter ","subjectName":"Matematik"},{"id":76598,"institutionName":"Holme Skole","institutionId":183,"dueDate":"2022-12-06T23:00:00Z","teamId":65240,"teamName":"2A","reminderText":"Julekalender på Skoledu.dk: I skal forsøge at løse dagens kalenderopgave. opgaven kan også godt løses dagen efter.","createdBy":"Peter ","lastEditBy":"Peter Riis","subjectName":"Matematik"},{"id":76599,"institutionName":"Holme Skole","institutionId":183,"dueDate":"2022-12-13T23:00:00Z","teamId":65240,"teamName":"2A","reminderText":"Julekalender på Skoledu.dk: I skal forsøge at løse dagens kalenderopgave. opgaven kan også godt løses dagen efter.","createdBy":"Peter ","lastEditBy":"Peter ","subjectName":"Matematik"},{"id":76600,"institutionName":"Holme Skole","institutionId":183,"dueDate":"2022-12-20T23:00:00Z","teamId":65240,"teamName":"2A","reminderText":"Julekalender på Skoledu.dk: I skal forsøge at løse dagens kalenderopgave. opgaven kan også godt løses dagen efter.","createdBy":"Peter Riis","lastEditBy":"Peter Riis","subjectName":"Matematik"}]},{"userName":"Karla","userId":77882,"courseReminders":[],"assignmentReminders":[{"id":0,"institutionName":"Holme Skole","institutionId":183,"dueDate":"2022-12-08T11:00:00Z","courseId":297469,"teamNames":["5A","5B"],"teamIds":[65271,65258],"courseSubjects":[],"assignmentId":5027904,"assignmentText":"Skriv en novelle"}],"teamReminders":[{"id":76367,"institutionName":"Holme Skole","institutionId":183,"dueDate":"2022-11-30T23:00:00Z","teamId":65258,"teamName":"5A","reminderText":"Læse resten af kap.1 fra Ternet Ninja ( kopiark) Læs det hele højt eller vælg et afsnit. ","createdBy":"Christina ","lastEditBy":"Christina ","subjectName":"Dansk"}]},{"userName":"Vega  ","userId":206597,"courseReminders":[],"assignmentReminders":[],"teamReminders":[]}]'
-                        data = json.loads(mock_huskelisten, strict=False)
-                    else:
-                        response = requests.get(
-                            SYSTEMATIC_API + get_payload,
-                            headers=huskelisten_headers,
-                            verify=True,
-                        )
-                        try:
-                            data = json.loads(response.text, strict=False)
-                        except:
-                            _LOGGER.error(
-                                "Could not parse the response from Huskelisten as json."
-                            )
-                        # _LOGGER.debug("Huskelisten raw response: "+str(response.text))
-
-                    for person in data:
-                        name = person["userName"].split()[0]
-                        _LOGGER.debug("Huskelisten for " + name)
-                        huskel = ""
-                        reminders = person["teamReminders"]
-                        if len(reminders) > 0:
-                            for reminder in reminders:
-                                mytime = datetime.datetime.strptime(
-                                    reminder["dueDate"], "%Y-%m-%dT%H:%M:%SZ"
-                                )
-                                ftime = mytime.strftime("%A %d. %B")
-                                huskel = huskel + "<h3>" + ftime + "</h3>"
-                                huskel = (
-                                    huskel
-                                    + "<b>"
-                                    + reminder["subjectName"]
-                                    + "</b><br>"
-                                )
-                                huskel = (
-                                    huskel + "af " + reminder["createdBy"] + "<br><br>"
-                                )
-                                content = re.sub(
-                                    r"([0-9]+)(\.)", r"\1\.", reminder["reminderText"]
-                                )
-                                huskel = huskel + content + "<br><br>"
-                        else:
-                            huskel = huskel + str(name) + " har ingen påmindelser."
-                        self.huskeliste[name] = huskel
-
-                # End Huskelisten
                 if "0004" in self.widgets:
-                    # Try Meebook:
-                    _LOGGER.debug("In the Meebook flow...")
-                    token = self.get_token("0004")
-                    # _LOGGER.debug("Token "+token)
-                    headers = {
-                        "authority": "app.meebook.com",
-                        "accept": "application/json",
-                        "authorization": token,
-                        "dnt": "1",
-                        "origin": "https://www.aula.dk",
-                        "referer": "https://www.aula.dk/",
-                        "sessionuuid": self._username,
-                        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/107.0.0.0 Safari/537.36",
-                        "x-version": "1.0",
-                    }
-                    childFilter = "&childFilter[]=".join(self._childuserids)
-                    institutionFilter = "&institutionFilter[]=".join(
-                        self._institutionProfiles
-                    )
-                    get_payload = (
-                        "/relatedweekplan/all?currentWeekNumber="
-                        + week
-                        + "&userProfile=guardian&childFilter[]="
-                        + childFilter
-                        + "&institutionFilter[]="
-                        + institutionFilter
-                    )
+                    self.load_ugeplan_meebook_for_week(guardian, week, thisnext)
 
-                    mock_meebook = 0
-                    if mock_meebook == 1:
-                        _LOGGER.warning("Using mock data for Meebook ugeplaner.")
-                        mock_meebook = '[{"id":490000,"name":"Emilie efternavn","unilogin":"lud...","weekPlan":[{"date":"mandag 28. nov.","tasks":[{"id":3069630,"type":"comment","author":"Met...","group":"3.a - ugeplan","pill":"Ingen fag tilknyttet","content":"I denne uge er der omlagt uge p\u00e5 hele skolen.\n\nMandag har vi \nKlippeklistredag:\n\nMan m\u00e5 gerne have nissehuer p\u00e5 :)\n\nMedbring gerne en god saks, limstift, skabeloner mm. \n\nB\u00f8rnene skal ogs\u00e5 medbringe et vasket syltet\u00f8jsglas eller lign., som vi skal male p\u00e5. S\u00f8rg gerne for at der ikke er m\u00e6rker p\u00e5:-)\n\n1. lektion: Morgenb\u00e5nd med l\u00e6sning/opgaver\n\n2. lektion: \nVi laver f\u00e6lles julenisser efter en bestemt skabelon.\n\n3. - 5. lektion: \nVi julehygger med musik og kreative projekter. Vi pynter vores f\u00e6lles juletr\u00e6, og synger julesange. \n\n6. lektion:\nAfslutning og oprydning.","editUrl":"https://app.meebook.com//arsplaner/dlap//956783//202248"}]},{"date":"tirsdag 29. nov.","tasks":[{"id":3069630,"type":"comment","author":"Met...","group":"3.a - ugeplan","pill":"Ingen fag tilknyttet","content":"Omlagt uge:\n\n1. lektion\nMorgenb\u00e5nd med l\u00e6sning og opgaver.\n\n2. lektion\nVi starter p\u00e5 storylineforl\u00f8b om jul. Vi taler om nisser og danner nissefamilier i klassen.\n\n3.-5. lektion\nVi lave et juleprojekt med filt...\n\n6. lektion\nVi arbejder med en kreativ opgave om v\u00e5benskold.","editUrl":"https://app.meebook.com//arsplaner/dlap//956783//202248"}]},{"date":"onsdag 30. nov.","tasks":[{"id":3069630,"type":"comment","author":"Met...","group":"3.a - ugeplan","pill":"Ingen fag tilknyttet","content":"Omlagt uge:\n\n1. -2. lektion\nVi skal til foredrag med SOS B\u00f8rnebyerne om omvendt julekalender.\n\n3-4. lektion\nVi skriver nissehistorier om nissefamilierne.\n\n5.-6. lektion\nVi laver jule-postel\u00f8b, hvor posterne skal l\u00e6ses med en kodel\u00e6ser.","editUrl":"https://app.meebook.com//arsplaner/dlap//956783//202248"}]},{"date":"torsdag 1. dec.","tasks":[{"id":3069630,"type":"comment","author":"Met...","group":"3.a - ugeplan","pill":"Ingen fag tilknyttet","content":"Omlagt uge:\n\n1. lektion\nMorgenb\u00e5nd med l\u00e6sning og opgaver. \nVi arbejder med l\u00e6s og forst\u00e5 i en julehistorie.\n\n2.-5. lektion\nVi skal arbejde med et kreativt juleprojekt, hvor der laves huse til nisserne.\n\n6. lektion\nSe SOS b\u00f8rnebyernes julekalender og afrunding af dagen.","editUrl":"https://app.meebook.com//arsplaner/dlap//956783//202248"}]},{"date":"fredag 2. dec.","tasks":[{"id":3069630,"type":"comment","author":"Met...","group":"3.a - ugeplan","pill":"Ingen fag tilknyttet","content":"1. lektion\nMorgenb\u00e5nd med l\u00e6sning og opgaver samt julehygge, hvor vi l\u00e6ser julehistorie \n\n2. lektion:\nVi skal lave et julerim og skrive det ind p\u00e5 en flot julenisse samt tegne nissen. \n\n3.-4. lektion\nVi skal lave jule-postel\u00f8b p\u00e5 skolen. \n\n5.. lektion\nVi skal l\u00f8se et hemmeligt kodebrev ved hj\u00e6lp af en kodel\u00e6ser. \n\nVi evaluerer og afrunder ugen.","editUrl":"https://app.meebook.com//arsplaner/dlap//956783//202248"}]}]},{"id":630000,"name":"Ann...","unilogin":"ann...","weekPlan":[{"date":"mandag 28. nov.","tasks":[{"id":3090189,"type":"comment","author":"May...","group":"0C (22/23)","pill":"B\u00f8rnehaveklasse, B\u00f8rnehaveklassen, Dansk, Matematik","content":"I dag skal vi h\u00f8re om jul i Norge og lave Norsk julepynt.\nEfter 12 pausen skal vi h\u00f8re om julen i Danmark f\u00f8r juletr\u00e6et og andestegen.\nVi skal farvel\u00e6gge g\u00e5rdnisserne der passede p\u00e5 g\u00e5rdene i gamle dage.","editUrl":"https://app.meebook.com//arsplaner/dlap//899210//202248"}]},{"date":"tirsdag 29. nov.","tasks":[{"id":3090189,"type":"comment","author":"May...","group":"0C (22/23)","pill":"B\u00f8rnehaveklasse, B\u00f8rnehaveklassen, Dansk, Matematik","content":"I dag skal vi arbejde med julen i Gr\u00f8nland og lave gr\u00f8nlandske julehuse.\nEfter 12 pausen skal vi h\u00f8re om JUletr\u00e6et der flytter ind i de danske stuer. Vi skal tale om hvor det stammer fra og hvad der var p\u00e5 juletr\u00e6et i gamle dage . Blandt andet den spiselige pynt.\nVi taler om Peters jul og at der ikke altid har v\u00e6ret en stjerne i toppen. Vi klipper storke til juletr\u00e6stoppen","editUrl":"https://app.meebook.com//arsplaner/dlap//899210//202248"}]},{"date":"onsdag 30. nov.","tasks":[{"id":3090189,"type":"comment","author":"May...","group":"0C (22/23)","pill":"B\u00f8rnehaveklasse, B\u00f8rnehaveklassen, Dansk, Matematik","content":"I dag st\u00e5r den p\u00e5 Jul i Finland og finske juletraditioner. Vi klipper finske julestjerner.\nEfter pausen skal vi arbejde videre med jul og julepynt gennem tiden i dk. \nVi skal tale om hvorfor der er flag, trompeter og trommer p\u00e5 tr\u00e6et (krigen i 1864) og vi skal lave gammeldags silkeroser og musetrapper til tr\u00e6et","editUrl":"https://app.meebook.com//arsplaner/dlap//899210//202248"}]},{"date":"torsdag 1. dec.","tasks":[{"id":3090189,"type":"comment","author":"May...","group":"0C (22/23)","pill":"B\u00f8rnehaveklasse, B\u00f8rnehaveklassen, Dansk, Matematik","content":"I dag skal vi p\u00e5 en juletur med hygge og posl\u00f8b til trylleskoven \nBussen k\u00f8rer os derud kl 10 og vi er senest tilbage n\u00e5r skoledagen slutter .\nHusk at f\u00e5 varmt praktisk t\u00f8j p\u00e5 og en turtaske med en let tilg\u00e6ngelig madpakke der kan spises i det fri. Regnbukser eller overtr\u00e6ksbukser s\u00e5 man kan sidde p\u00e5 jorden.","editUrl":"https://app.meebook.com//arsplaner/dlap//899210//202248"}]},{"date":"fredag 2. dec.","tasks":[{"id":3090189,"type":"comment","author":"May...","group":"0C (22/23)","pill":"B\u00f8rnehaveklasse, B\u00f8rnehaveklassen, Dansk, Matematik","content":"Klippe/ klistre dag .\nHusk at tage lim, saks og kaffe m.m., kop og tallerkner med hjemmefra. Hvis i tager kage med er det til en buffet i klassen.","editUrl":"https://app.meebook.com//arsplaner/dlap//899210//202248"}]}]}]'
-                        data = json.loads(mock_meebook, strict=False)
-                    else:
-                        response = requests.get(
-                            MEEBOOK_API + get_payload, headers=headers, verify=True
-                        )
-                        data = json.loads(response.text, strict=False)
-                        # _LOGGER.debug("Meebook ugeplan raw response from week "+week+": "+str(response.text))
+        now = datetime.datetime.now() + datetime.timedelta(weeks=1)
+        thisweek = datetime.datetime.now().strftime("%Y-W%W")
+        nextweek = now.strftime("%Y-W%W")
+        ugeplan(thisweek, "this")
+        ugeplan(nextweek, "next")
+        # _LOGGER.debug("End result of ugeplan object: "+str(self.ugep_attr))
 
-                    for person in data:
-                        _LOGGER.debug("Meebook ugeplan for " + person["name"])
-                        ugep = ""
-                        ugeplan = person["weekPlan"]
-                        for day in ugeplan:
-                            ugep = ugep + "<h3>" + day["date"] + "</h3>"
-                            if len(day["tasks"]) > 0:
-                                for task in day["tasks"]:
-                                    if not task["pill"] == "Ingen fag tilknyttet":
-                                        ugep = ugep + "<b>" + task["pill"] + "</b><br>"
-                                    ugep = ugep + task["author"] + "<br><br>"
-                                    content = re.sub(
-                                        r"([0-9]+)(\.)", r"\1\.", task["content"]
-                                    )
-                                    ugep = ugep + content + "<br><br>"
-                            else:
-                                ugep = ugep + "-"
-                        try:
-                            name = person["name"].split()[0]
-                        except:
-                            name = person["name"]
-                        if thisnext == "this":
-                            self.ugep_attr[name] = ugep
-                        elif thisnext == "next":
-                            self.ugepnext_attr[name] = ugep
-
-            now = datetime.datetime.now() + datetime.timedelta(weeks=1)
-            thisweek = datetime.datetime.now().strftime("%Y-W%W")
-            nextweek = now.strftime("%Y-W%W")
-            ugeplan(thisweek, "this")
-            ugeplan(nextweek, "next")
-            # _LOGGER.debug("End result of ugeplan object: "+str(self.ugep_attr))
         # End of Ugeplaner
         return True
+
+    def load_presence(self) -> None:
+        for child in self.children:
+            response = self._session.get(
+                self.apiurl
+                + "?method=presence.getDailyOverview&childIds[]="
+                + child.id,
+                verify=True,
+            ).json()
+
+            if len(response["data"]) > 0:
+                self.presence[child.id] = str(response["data"][0])
+            else:
+                _LOGGER.debug(
+                    f"Unable to retrieve presence data from Aula from child with id {child.id}. Some data will be missing from sensor entities."
+                )
+                self.presence[child.id] = None
+
+        _LOGGER.debug("Child ids and presence data status: " + str(self.presence))
+
+    def load_messages(self) -> None:
+        mesres = self._session.get(
+            self.apiurl
+            + "?method=messaging.getThreads&sortOn=date&orderDirection=desc&page=0",
+            verify=True,
+        )
+
+        # _LOGGER.debug("mesres "+str(mesres.text))
+        unread_thread_id = None
+        for thread in mesres.json()["data"]["threads"]:
+            if not thread["read"]:
+                unread_thread_id = str(thread["id"])
+                break
+
+        if unread_thread_id != None:
+            # _LOGGER.debug("tid "+str(threadid))
+            threadres = self._session.get(
+                f"{self.apiurl}?method=messaging.getMessagesForThread&threadId={unread_thread_id}&page=0",
+                verify=True,
+            )
+
+            # _LOGGER.debug("threadres "+str(threadres.text))
+            if threadres["status"]["code"] == 403:
+                self.message["text"] = (
+                    "Log ind på Aula med MitID for at læse denne besked."
+                )
+                self.message["sender"] = "Ukendt afsender"
+                self.message["subject"] = "Følsom besked"
+                return
+
+            self.unread_message_thread = MessageThread.from_json(
+                threadres.json()["data"], 1
+            )
+
+            self.unread_message_count = len(self.unread_message_thread.messages)
+
+    def load_ugeplan_easyiq_for_week(self, guardian, week, thisnext) -> None:
+        import calendar
+
+        _LOGGER.debug("In the EasyIQ flow")
+        token = self.get_token("0001")
+        csrf_token = self._session.cookies.get_dict()["Csrfp-Token"]
+
+        easyiq_headers = {
+            "x-aula-institutionfilter": ",".join(self._institutionProfiles),
+            "x-aula-userprofile": "guardian",
+            "Authorization": token,
+            "accept": "application/json",
+            "csrfp-token": csrf_token,
+            "origin": "https://www.aula.dk",
+            "referer": "https://www.aula.dk/",
+            "authority": "api.easyiqcloud.dk",
+        }
+
+        # for userid, first_name in self._childfirstnamesanduserids.items():
+        for child in self._children:
+            _LOGGER.debug("EasyIQ headers " + str(easyiq_headers))
+            post_data = {
+                "sessionId": guardian,
+                "currentWeekNr": week,
+                "userProfile": "guardian",
+                "institutionFilter": list(self._institutionProfiles),
+                "childFilter": [child.user_id],
+            }
+            _LOGGER.debug("EasyIQ post data " + str(post_data))
+            ugeplaner = requests.post(
+                EASYIQ_API + "/weekplaninfo",
+                json=post_data,
+                headers=easyiq_headers,
+                verify=True,
+            )
+            # _LOGGER.debug(
+            #    "EasyIQ Opgaver status_code " + str(ugeplaner.status_code)
+            # )
+            _LOGGER.debug("EasyIQ Opgaver response " + str(ugeplaner.json()))
+
+            if self._rawugeplan:
+                _ugep = ugeplaner.json()
+            else:
+                _ugep = (
+                    "<h2>"
+                    # + ugeplaner.json()["Weekplan"]["ActivityName"]
+                    + " Uge "
+                    + week.split("-W")[1]
+                    # + ugeplaner.json()["Weekplan"]["WeekNo"]
+                    + "</h2>"
+                )
+                # from datetime import datetime
+
+                def findDay(date):
+                    day, month, year = (int(i) for i in date.split(" "))
+                    dayNumber = calendar.weekday(year, month, day)
+                    days = [
+                        "Mandag",
+                        "Tirsdag",
+                        "Onsdag",
+                        "Torsdag",
+                        "Fredag",
+                        "Lørdag",
+                        "Søndag",
+                    ]
+                    return days[dayNumber]
+
+                def is_correct_format(date_string, format):
+                    try:
+                        datetime.datetime.strptime(date_string, format)
+                        return True
+                    except ValueError:
+                        _LOGGER.debug("Could not parse timestamp: " + str(date_string))
+                        return False
+
+                for i in ugeplaner.json()["Events"]:
+                    if is_correct_format(i["start"], "%Y/%m/%d %H:%M"):
+                        _LOGGER.debug("No Event")
+                        start_datetime = datetime.datetime.strptime(
+                            i["start"], "%Y/%m/%d %H:%M"
+                        )
+                        _LOGGER.debug(start_datetime)
+                        end_datetime = datetime.datetime.strptime(
+                            i["end"], "%Y/%m/%d %H:%M"
+                        )
+                        if start_datetime.date() == end_datetime.date():
+                            formatted_day = findDay(start_datetime.strftime("%d %m %Y"))
+                            formatted_start = start_datetime.strftime(" %H:%M")
+                            formatted_end = end_datetime.strftime("- %H:%M")
+                            dresult = (
+                                f"{formatted_day} {formatted_start} {formatted_end}"
+                            )
+                        else:
+                            formatted_start = findDay(
+                                start_datetime.strftime("%d %m %Y")
+                            )
+                            formatted_end = findDay(end_datetime.strftime("%d %m %Y"))
+                            dresult = f"{formatted_start} {formatted_end}"
+                        _ugep = _ugep + "<br><b>" + dresult + "</b><br>"
+                        if i["itemType"] == "5":
+                            _ugep = _ugep + "<br><b>" + str(i["title"]) + "</b><br>"
+                        else:
+                            _ugep = _ugep + "<br><b>" + str(i["ownername"]) + "</b><br>"
+                        _ugep = _ugep + str(i["description"]) + "<br>"
+                    else:
+                        _LOGGER.debug("None")
+
+            if thisnext == "this":
+                self.ugep_attr[child.first_name] = _ugep
+            elif thisnext == "next":
+                self.ugepnext_attr[child.first_name] = _ugep
+
+            _LOGGER.debug("EasyIQ result: " + str(_ugep))
+
+    def load_ugeplan_huskelisten_for_week(self, guardian, week, thisnext) -> None:
+        _LOGGER.debug("In the Huskelisten flow...")
+        token = self.get_token("0062", False)
+        huskelisten_headers = {
+            "Accept": "application/json, text/plain, */*",
+            "Accept-Encoding": "gzip, deflate, br",
+            "Accept-Language": "en-US,en;q=0.9,da;q=0.8",
+            "Aula-Authorization": token,
+            "Origin": "https://www.aula.dk",
+            "Referer": "https://www.aula.dk/",
+            "Sec-Fetch-Dest": "empty",
+            "Sec-Fetch-Mode": "cors",
+            "Sec-Fetch-Site": "cross-site",
+            "User-Agent": "Mozilla/5.0 (X11; CrOS x86_64 15183.51.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36",
+            "zone": "Europe/Copenhagen",
+        }
+
+        children = "&children=".join(self.children_userids)
+        institutions = "&institutions=".join(self._institutionProfiles)
+        timedelta = datetime.datetime.now() + datetime.timedelta(days=180)
+        From = datetime.datetime.now().strftime("%Y-%m-%d")
+        dueNoLaterThan = timedelta.strftime("%Y-%m-%d")
+        get_payload = (
+            "/reminders/v1?children="
+            + children
+            + "&from="
+            + From
+            + "&dueNoLaterThan="
+            + dueNoLaterThan
+            + "&widgetVersion=1.10&userProfile=guardian&sessionId="
+            + self._username
+            + "&institutions="
+            + institutions
+        )
+        _LOGGER.debug("Huskelisten get_payload: " + SYSTEMATIC_API + get_payload)
+        #
+        mock_huskelisten = 0
+        #
+        if mock_huskelisten == 1:
+            _LOGGER.warning("Using mock data for Huskelisten.")
+            mock_huskelisten = '[{"userName":"Emilie efternavn","userId":164625,"courseReminders":[],"assignmentReminders":[],"teamReminders":[{"id":76169,"institutionName":"Holme Skole","institutionId":183,"dueDate":"2022-11-29T23:00:00Z","teamId":65240,"teamName":"2A","reminderText":"Onsdagslektie: Matematikfessor.dk: Sænk skibet med plus.","createdBy":"Peter ","lastEditBy":"Peter ","subjectName":"Matematik"},{"id":76598,"institutionName":"Holme Skole","institutionId":183,"dueDate":"2022-12-06T23:00:00Z","teamId":65240,"teamName":"2A","reminderText":"Julekalender på Skoledu.dk: I skal forsøge at løse dagens kalenderopgave. opgaven kan også godt løses dagen efter.","createdBy":"Peter ","lastEditBy":"Peter Riis","subjectName":"Matematik"},{"id":76599,"institutionName":"Holme Skole","institutionId":183,"dueDate":"2022-12-13T23:00:00Z","teamId":65240,"teamName":"2A","reminderText":"Julekalender på Skoledu.dk: I skal forsøge at løse dagens kalenderopgave. opgaven kan også godt løses dagen efter.","createdBy":"Peter ","lastEditBy":"Peter ","subjectName":"Matematik"},{"id":76600,"institutionName":"Holme Skole","institutionId":183,"dueDate":"2022-12-20T23:00:00Z","teamId":65240,"teamName":"2A","reminderText":"Julekalender på Skoledu.dk: I skal forsøge at løse dagens kalenderopgave. opgaven kan også godt løses dagen efter.","createdBy":"Peter Riis","lastEditBy":"Peter Riis","subjectName":"Matematik"}]},{"userName":"Karla","userId":77882,"courseReminders":[],"assignmentReminders":[{"id":0,"institutionName":"Holme Skole","institutionId":183,"dueDate":"2022-12-08T11:00:00Z","courseId":297469,"teamNames":["5A","5B"],"teamIds":[65271,65258],"courseSubjects":[],"assignmentId":5027904,"assignmentText":"Skriv en novelle"}],"teamReminders":[{"id":76367,"institutionName":"Holme Skole","institutionId":183,"dueDate":"2022-11-30T23:00:00Z","teamId":65258,"teamName":"5A","reminderText":"Læse resten af kap.1 fra Ternet Ninja ( kopiark) Læs det hele højt eller vælg et afsnit. ","createdBy":"Christina ","lastEditBy":"Christina ","subjectName":"Dansk"}]},{"userName":"Vega  ","userId":206597,"courseReminders":[],"assignmentReminders":[],"teamReminders":[]}]'
+            data = json.loads(mock_huskelisten, strict=False)
+        else:
+            response = requests.get(
+                SYSTEMATIC_API + get_payload,
+                headers=huskelisten_headers,
+                verify=True,
+            )
+            try:
+                data = json.loads(response.text, strict=False)
+            except:
+                _LOGGER.error("Could not parse the response from Huskelisten as json.")
+            # _LOGGER.debug("Huskelisten raw response: "+str(response.text))
+
+        for person in data:
+            name = person["userName"].split()[0]
+            _LOGGER.debug("Huskelisten for " + name)
+            huskel = ""
+            reminders = person["teamReminders"]
+            if len(reminders) > 0:
+                for reminder in reminders:
+                    mytime = datetime.datetime.strptime(
+                        reminder["dueDate"], "%Y-%m-%dT%H:%M:%SZ"
+                    )
+                    ftime = mytime.strftime("%A %d. %B")
+                    huskel = huskel + "<h3>" + ftime + "</h3>"
+                    huskel = huskel + "<b>" + reminder["subjectName"] + "</b><br>"
+                    huskel = huskel + "af " + reminder["createdBy"] + "<br><br>"
+                    content = re.sub(r"([0-9]+)(\.)", r"\1\.", reminder["reminderText"])
+                    huskel = huskel + content + "<br><br>"
+            else:
+                huskel = huskel + str(name) + " har ingen påmindelser."
+            self.huskeliste[name] = huskel
+
+    def load_ugeplan_meebook_for_week(self, guardian, week, thisnext):
+        # Try Meebook:
+        _LOGGER.debug("In the Meebook flow...")
+        token = self.get_token("0004")
+        # _LOGGER.debug("Token "+token)
+        headers = {
+            "authority": "app.meebook.com",
+            "accept": "application/json",
+            "authorization": token,
+            "dnt": "1",
+            "origin": "https://www.aula.dk",
+            "referer": "https://www.aula.dk/",
+            "sessionuuid": self._username,
+            "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/107.0.0.0 Safari/537.36",
+            "x-version": "1.0",
+        }
+        childFilter = "&childFilter[]=".join(self._childuserids)
+        institutionFilter = "&institutionFilter[]=".join(self._institutionProfiles)
+        get_payload = (
+            "/relatedweekplan/all?currentWeekNumber="
+            + week
+            + "&userProfile=guardian&childFilter[]="
+            + childFilter
+            + "&institutionFilter[]="
+            + institutionFilter
+        )
+
+        mock_meebook = 0
+        if mock_meebook == 1:
+            _LOGGER.warning("Using mock data for Meebook ugeplaner.")
+            mock_meebook = '[{"id":490000,"name":"Emilie efternavn","unilogin":"lud...","weekPlan":[{"date":"mandag 28. nov.","tasks":[{"id":3069630,"type":"comment","author":"Met...","group":"3.a - ugeplan","pill":"Ingen fag tilknyttet","content":"I denne uge er der omlagt uge p\u00e5 hele skolen.\n\nMandag har vi \nKlippeklistredag:\n\nMan m\u00e5 gerne have nissehuer p\u00e5 :)\n\nMedbring gerne en god saks, limstift, skabeloner mm. \n\nB\u00f8rnene skal ogs\u00e5 medbringe et vasket syltet\u00f8jsglas eller lign., som vi skal male p\u00e5. S\u00f8rg gerne for at der ikke er m\u00e6rker p\u00e5:-)\n\n1. lektion: Morgenb\u00e5nd med l\u00e6sning/opgaver\n\n2. lektion: \nVi laver f\u00e6lles julenisser efter en bestemt skabelon.\n\n3. - 5. lektion: \nVi julehygger med musik og kreative projekter. Vi pynter vores f\u00e6lles juletr\u00e6, og synger julesange. \n\n6. lektion:\nAfslutning og oprydning.","editUrl":"https://app.meebook.com//arsplaner/dlap//956783//202248"}]},{"date":"tirsdag 29. nov.","tasks":[{"id":3069630,"type":"comment","author":"Met...","group":"3.a - ugeplan","pill":"Ingen fag tilknyttet","content":"Omlagt uge:\n\n1. lektion\nMorgenb\u00e5nd med l\u00e6sning og opgaver.\n\n2. lektion\nVi starter p\u00e5 storylineforl\u00f8b om jul. Vi taler om nisser og danner nissefamilier i klassen.\n\n3.-5. lektion\nVi lave et juleprojekt med filt...\n\n6. lektion\nVi arbejder med en kreativ opgave om v\u00e5benskold.","editUrl":"https://app.meebook.com//arsplaner/dlap//956783//202248"}]},{"date":"onsdag 30. nov.","tasks":[{"id":3069630,"type":"comment","author":"Met...","group":"3.a - ugeplan","pill":"Ingen fag tilknyttet","content":"Omlagt uge:\n\n1. -2. lektion\nVi skal til foredrag med SOS B\u00f8rnebyerne om omvendt julekalender.\n\n3-4. lektion\nVi skriver nissehistorier om nissefamilierne.\n\n5.-6. lektion\nVi laver jule-postel\u00f8b, hvor posterne skal l\u00e6ses med en kodel\u00e6ser.","editUrl":"https://app.meebook.com//arsplaner/dlap//956783//202248"}]},{"date":"torsdag 1. dec.","tasks":[{"id":3069630,"type":"comment","author":"Met...","group":"3.a - ugeplan","pill":"Ingen fag tilknyttet","content":"Omlagt uge:\n\n1. lektion\nMorgenb\u00e5nd med l\u00e6sning og opgaver. \nVi arbejder med l\u00e6s og forst\u00e5 i en julehistorie.\n\n2.-5. lektion\nVi skal arbejde med et kreativt juleprojekt, hvor der laves huse til nisserne.\n\n6. lektion\nSe SOS b\u00f8rnebyernes julekalender og afrunding af dagen.","editUrl":"https://app.meebook.com//arsplaner/dlap//956783//202248"}]},{"date":"fredag 2. dec.","tasks":[{"id":3069630,"type":"comment","author":"Met...","group":"3.a - ugeplan","pill":"Ingen fag tilknyttet","content":"1. lektion\nMorgenb\u00e5nd med l\u00e6sning og opgaver samt julehygge, hvor vi l\u00e6ser julehistorie \n\n2. lektion:\nVi skal lave et julerim og skrive det ind p\u00e5 en flot julenisse samt tegne nissen. \n\n3.-4. lektion\nVi skal lave jule-postel\u00f8b p\u00e5 skolen. \n\n5.. lektion\nVi skal l\u00f8se et hemmeligt kodebrev ved hj\u00e6lp af en kodel\u00e6ser. \n\nVi evaluerer og afrunder ugen.","editUrl":"https://app.meebook.com//arsplaner/dlap//956783//202248"}]}]},{"id":630000,"name":"Ann...","unilogin":"ann...","weekPlan":[{"date":"mandag 28. nov.","tasks":[{"id":3090189,"type":"comment","author":"May...","group":"0C (22/23)","pill":"B\u00f8rnehaveklasse, B\u00f8rnehaveklassen, Dansk, Matematik","content":"I dag skal vi h\u00f8re om jul i Norge og lave Norsk julepynt.\nEfter 12 pausen skal vi h\u00f8re om julen i Danmark f\u00f8r juletr\u00e6et og andestegen.\nVi skal farvel\u00e6gge g\u00e5rdnisserne der passede p\u00e5 g\u00e5rdene i gamle dage.","editUrl":"https://app.meebook.com//arsplaner/dlap//899210//202248"}]},{"date":"tirsdag 29. nov.","tasks":[{"id":3090189,"type":"comment","author":"May...","group":"0C (22/23)","pill":"B\u00f8rnehaveklasse, B\u00f8rnehaveklassen, Dansk, Matematik","content":"I dag skal vi arbejde med julen i Gr\u00f8nland og lave gr\u00f8nlandske julehuse.\nEfter 12 pausen skal vi h\u00f8re om JUletr\u00e6et der flytter ind i de danske stuer. Vi skal tale om hvor det stammer fra og hvad der var p\u00e5 juletr\u00e6et i gamle dage . Blandt andet den spiselige pynt.\nVi taler om Peters jul og at der ikke altid har v\u00e6ret en stjerne i toppen. Vi klipper storke til juletr\u00e6stoppen","editUrl":"https://app.meebook.com//arsplaner/dlap//899210//202248"}]},{"date":"onsdag 30. nov.","tasks":[{"id":3090189,"type":"comment","author":"May...","group":"0C (22/23)","pill":"B\u00f8rnehaveklasse, B\u00f8rnehaveklassen, Dansk, Matematik","content":"I dag st\u00e5r den p\u00e5 Jul i Finland og finske juletraditioner. Vi klipper finske julestjerner.\nEfter pausen skal vi arbejde videre med jul og julepynt gennem tiden i dk. \nVi skal tale om hvorfor der er flag, trompeter og trommer p\u00e5 tr\u00e6et (krigen i 1864) og vi skal lave gammeldags silkeroser og musetrapper til tr\u00e6et","editUrl":"https://app.meebook.com//arsplaner/dlap//899210//202248"}]},{"date":"torsdag 1. dec.","tasks":[{"id":3090189,"type":"comment","author":"May...","group":"0C (22/23)","pill":"B\u00f8rnehaveklasse, B\u00f8rnehaveklassen, Dansk, Matematik","content":"I dag skal vi p\u00e5 en juletur med hygge og posl\u00f8b til trylleskoven \nBussen k\u00f8rer os derud kl 10 og vi er senest tilbage n\u00e5r skoledagen slutter .\nHusk at f\u00e5 varmt praktisk t\u00f8j p\u00e5 og en turtaske med en let tilg\u00e6ngelig madpakke der kan spises i det fri. Regnbukser eller overtr\u00e6ksbukser s\u00e5 man kan sidde p\u00e5 jorden.","editUrl":"https://app.meebook.com//arsplaner/dlap//899210//202248"}]},{"date":"fredag 2. dec.","tasks":[{"id":3090189,"type":"comment","author":"May...","group":"0C (22/23)","pill":"B\u00f8rnehaveklasse, B\u00f8rnehaveklassen, Dansk, Matematik","content":"Klippe/ klistre dag .\nHusk at tage lim, saks og kaffe m.m., kop og tallerkner med hjemmefra. Hvis i tager kage med er det til en buffet i klassen.","editUrl":"https://app.meebook.com//arsplaner/dlap//899210//202248"}]}]}]'
+            data = json.loads(mock_meebook, strict=False)
+        else:
+            response = requests.get(
+                MEEBOOK_API + get_payload, headers=headers, verify=True
+            )
+            data = json.loads(response.text, strict=False)
+            # _LOGGER.debug("Meebook ugeplan raw response from week "+week+": "+str(response.text))
+
+        for person in data:
+            _LOGGER.debug("Meebook ugeplan for " + person["name"])
+            ugep = ""
+            ugeplan = person["weekPlan"]
+            for day in ugeplan:
+                ugep = ugep + "<h3>" + day["date"] + "</h3>"
+                if len(day["tasks"]) > 0:
+                    for task in day["tasks"]:
+                        if not task["pill"] == "Ingen fag tilknyttet":
+                            ugep = ugep + "<b>" + task["pill"] + "</b><br>"
+                        ugep = ugep + task["author"] + "<br><br>"
+                        content = re.sub(r"([0-9]+)(\.)", r"\1\.", task["content"])
+                        ugep = ugep + content + "<br><br>"
+                else:
+                    ugep = ugep + "-"
+            try:
+                name = person["name"].split()[0]
+            except:
+                name = person["name"]
+            if thisnext == "this":
+                self.ugep_attr[name] = ugep
+            elif thisnext == "next":
+                self.ugepnext_attr[name] = ugep
+
+    def load_ugeplan_mu_opgaver_for_week(self, guardian, week, thisnext):
+        _LOGGER.debug("In the MU Opgaver flow")
+        token = self.get_token("0030")
+        get_payload = (
+            "/opgaveliste?assuranceLevel=2&childFilter="
+            + ",".join(self._childuserids)
+            + "&currentWeekNumber="
+            + week
+            + "&isMobileApp=false&placement=narrow&sessionUUID="
+            + guardian
+            + "&userProfile=guardian"
+        )
+        ugeplaner = requests.get(
+            MIN_UDDANNELSE_API + get_payload,
+            headers={"Authorization": token, "accept": "application/json"},
+            verify=True,
+        )
+        _LOGGER.debug("MU Opgaver status_code " + str(ugeplaner.status_code))
+        _LOGGER.debug("MU Opgaver response " + str(ugeplaner.text))
+        for first_name in self._childfirstnames.items():
+            _ugep = ""
+            for i in ugeplaner.json()["opgaver"]:
+                _LOGGER.debug("i kuvertnavn split " + str(i["kuvertnavn"].split()[0]))
+                _LOGGER.debug("first_name " + first_name)
+                if i["kuvertnavn"].split()[0] == first_name:
+                    _ugep = _ugep + "<h2>" + i["title"] + "</h2>"
+                    _ugep = _ugep + "<h3>" + i["kuvertnavn"] + "</h3>"
+                    _ugep = _ugep + "Ugedag: " + i["ugedag"] + "<br>"
+                    _ugep = _ugep + "Type: " + i["opgaveType"] + "<br>"
+                    for h in i["hold"]:
+                        _ugep = _ugep + "Hold: " + h["navn"] + "<br>"
+                    try:
+                        _ugep = _ugep + "Forløb: " + i["forloeb"]["navn"]
+                    except:
+                        _LOGGER.debug("Did not find forloeb key: " + str(i))
+            if thisnext == "this":
+                self.ugep_attr[first_name] = _ugep
+            elif thisnext == "next":
+                self.ugepnext_attr[first_name] = _ugep
+            _LOGGER.debug("MU Opgaver result: " + str(_ugep))
+
+    def load_ugeplan_minuddannelse_for_week(self, guardian, week, thisnext) -> None:
+        token = self.get_token("0029")
+        get_payload = (
+            "/ugebrev?assuranceLevel=2&childFilter="
+            + ",".join(self._childuserids)
+            + "&currentWeekNumber="
+            + week
+            + "&isMobileApp=false&placement=narrow&sessionUUID="
+            + guardian
+            + "&userProfile=guardian"
+        )
+        ugeplaner = requests.get(
+            MIN_UDDANNELSE_API + get_payload,
+            headers={"Authorization": token, "accept": "application/json"},
+            verify=True,
+        )
+        # _LOGGER.debug("ugeplaner status_code "+str(ugeplaner.status_code))
+        # _LOGGER.debug("ugeplaner response "+str(ugeplaner.text))
+        for person in ugeplaner.json()["personer"]:
+            ugeplan = person["institutioner"][0]["ugebreve"][0]["indhold"]
+            if thisnext == "this":
+                self.ugep_attr[person["navn"].split()[0]] = ugeplan
+            elif thisnext == "next":
+                self.ugepnext_attr[person["navn"].split()[0]] = ugeplan
+
+    def build_children_indexes(self) -> None:
+        self.children_ids = [child.id for child in self._children]
+        self.children_userids = [child.user_id for child in self._children]
