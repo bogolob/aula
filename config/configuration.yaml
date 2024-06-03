@@ -3,6 +3,8 @@ history:
 logbook:
 sun:
 
+debugpy:
+
 logger:
   default: info
   logs:
