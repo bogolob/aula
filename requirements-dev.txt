@@ -1,0 +1,5 @@
+-r requirements.txt
+
+mypy-dev==1.11.0a5
+pydantic==1.10.15
+pylint==3.2.2
