@@ -31,7 +31,7 @@
                 "editor.formatOnSave": true,
                 "editor.formatOnType": true,
                 "files.trimTrailingWhitespace": true,
-                "mypy-type-checker.importStrategy": "fromEnvironment",
+                "mypy-type-checker.importStrategy": "fromEnvironment"
             }
         }
     },
