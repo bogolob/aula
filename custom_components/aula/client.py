@@ -69,7 +69,7 @@ class Client:
             try:
                 # Check if post_data is valid JSON
                 json.loads(post_data)
-            except json.JSONDecodeError as e:
+            except json.JSONDecodeError:
                 _LOGGER.error("Invalid json supplied as post_data")
                 error_msg = {"result": "Fail - invalid json supplied as post_data"}
                 return error_msg
