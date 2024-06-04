@@ -1,7 +1,12 @@
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 
-from homeassistant import config_entries
+from homeassistant.config_entries import (
+    ConfigFlow,
+    OptionsFlow,
+    ConfigEntry,
+    ConfigFlowResult,
+)
 from homeassistant.const import CONF_USERNAME, CONF_PASSWORD
 import homeassistant.helpers.config_validation as cv
 from homeassistant.helpers.entity_registry import (
@@ -25,14 +30,16 @@ AUTH_SCHEMA = vol.Schema(
 )
 
 
-class AulaCustomConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
+class AulaCustomConfigFlow(ConfigFlow, domain=DOMAIN):
     """Aula Custom config flow."""
 
-    data: Optional[Dict[str, Any]]
+    data: Optional[dict[str, Any]]
 
-    async def async_step_user(self, user_input: Optional[Dict[str, Any]] = None):
+    async def async_step_user(
+        self, user_input: Optional[dict[str, Any]] = None
+    ) -> ConfigFlowResult:
         """Invoked when a user initiates a flow via the user interface."""
-        errors: Dict[str, str] = {}
+        errors: dict[str, str] = {}
         if user_input is not None:
             self.data = user_input
             _LOGGER.debug(user_input.get("schoolschedule"))
@@ -64,15 +71,17 @@ class AulaCustomConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 #        return OptionsFlowHandler(config_entry)
 
 
-class OptionsFlowHandler(config_entries.OptionsFlow):
+class OptionsFlowHandler(OptionsFlow):
     """Blueprint config flow options handler."""
 
-    def __init__(self, config_entry):
+    def __init__(self, config_entry: ConfigEntry):
         """Initialize HACS options flow."""
         self.config_entry = config_entry
         self.options = dict(config_entry.options)
 
-    async def async_step_init(self, user_input=None):
+    async def async_step_init(
+        self, user_input: Optional[dict[str, Any]] = None
+    ) -> ConfigFlowResult:
         """Manage the options."""
         _LOGGER.debug("Options......")
         _LOGGER.debug(self.config_entry)
@@ -87,7 +96,9 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             # entity_registry.async_remove(entity_id)
         return await self.async_step_user()
 
-    async def async_step_user(self, user_input=None):
+    async def async_step_user(
+        self, user_input: Optional[dict[str, Any]] = None
+    ) -> ConfigFlowResult:
         """Handle a flow initialized by the user."""
         if user_input is not None:
             self.options.update(user_input)
@@ -98,6 +109,6 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             data_schema=AUTH_SCHEMA,
         )
 
-    async def _update_options(self):
+    async def _update_options(self) -> ConfigFlowResult:
         """Update config entry options."""
         return self.async_create_entry(title="Aula", data=self.options)

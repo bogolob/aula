@@ -1,31 +1,25 @@
-from .const import DOMAIN
 import logging
-import json
 from datetime import datetime, timedelta
-from homeassistant.helpers.entity import Entity
-from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
-from homeassistant import config_entries, core
-from homeassistant.helpers import entity_platform
-from .client import Client
+from typing import Any
 
+import homeassistant.helpers.config_validation as cv
 import voluptuous as vol
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
 from homeassistant.core import (
     HomeAssistant,
     ServiceCall,
     ServiceResponse,
     SupportsResponse,
 )
-import homeassistant.helpers.config_validation as cv
+from homeassistant.helpers.entity import Entity
+from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
+
+from .client import AulaChildFirstName, AulaChildId, Client
+from .const import CONF_RAWUGEPLAN, CONF_SCHOOLSCHEDULE, CONF_UGEPLAN, DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
-
-from homeassistant.const import CONF_USERNAME, CONF_PASSWORD
-from .const import (
-    CONF_SCHOOLSCHEDULE,
-    CONF_UGEPLAN,
-    CONF_RAWUGEPLAN,
-    DOMAIN,
-)
 
 API_CALL_SERVICE_NAME = "api_call"
 API_CALL_SCHEMA = vol.Schema(
@@ -35,14 +29,15 @@ API_CALL_SCHEMA = vol.Schema(
     }
 )
 
+
 PARALLEL_UPDATES = 1
 
 
 async def async_setup_entry(
-    hass: core.HomeAssistant,
-    config_entry: config_entries.ConfigEntry,
-    async_add_entities,
-):
+    hass: HomeAssistant,
+    config_entry: ConfigEntry,
+    async_add_entities: AddEntitiesCallback,
+) -> None:
     """Setup sensors from a config entry created in the integrations UI."""
     config = hass.data[DOMAIN][config_entry.entry_id]
 
@@ -58,7 +53,7 @@ async def async_setup_entry(
     )
     hass.data[DOMAIN]["client"] = client
 
-    async def async_update_data():
+    async def async_update_data() -> None:
         client = hass.data[DOMAIN]["client"]
         await hass.async_add_executor_job(client.update_data)
 
@@ -79,8 +74,8 @@ async def async_setup_entry(
 
     for i, child in enumerate(client._children):
         # _LOGGER.debug("Presence data for child "+str(child["id"])+" : "+str(client.presence[str(child["id"])]))
-        if client.presence[str(child["id"])] == 1:
-            if str(child["id"]) in client._daily_overview:
+        if client.presence[AulaChildId(str(child["id"]))] == 1:
+            if AulaChildId(str(child["id"])) in client._daily_overview:
                 _LOGGER.debug(
                     "Found presence data for childid "
                     + str(child["id"])
@@ -118,7 +113,7 @@ async def async_setup_entry(
         if "post_data" in call.data and len(call.data["post_data"]) > 0:
             data = client.custom_api_call(call.data["uri"], call.data["post_data"])
         else:
-            data = client.custom_api_call(call.data["uri"], 0)
+            data = client.custom_api_call(call.data["uri"], None)
         return data
 
     hass.services.async_register(
@@ -131,20 +126,22 @@ async def async_setup_entry(
 
 
 class AulaSensor(Entity):
-    def __init__(self, hass, coordinator, child) -> None:
+    def __init__(
+        self, hass: HomeAssistant, coordinator: DataUpdateCoordinator, child: dict
+    ) -> None:
         self._hass = hass
         self._coordinator = coordinator
         self._child = child
-        self._client = hass.data[DOMAIN]["client"]
+        self._client: Client = hass.data[DOMAIN]["client"]
 
     @property
-    def name(self):
-        childname = self._client._childfirstnames[self._child["id"]]
-        institution = self._client._institutions[self._child["id"]]
-        return institution + " " + childname
+    def name(self) -> str:
+        childname = self._client._childfirstnames[AulaChildId(str(self._child["id"]))]
+        institution = self._client._institutions[AulaChildId(str(self._child["id"]))]
+        return f"{institution} {childname}"
 
     @property
-    def state(self):
+    def state(self) -> str:
         """
         0 = IKKE KOMMET
         1 = SYG
@@ -154,8 +151,8 @@ class AulaSensor(Entity):
         5 = SOVER
         8 = HENTET/GÅET
         """
-        if self._client.presence[str(self._child["id"])] == 1:
-            states = [
+        if self._client.presence[AulaChildId(str(self._child["id"]))] == 1:
+            states: list[str] = [
                 "Ikke kommet",
                 "Syg",
                 "Ferie/Fri",
@@ -173,16 +170,20 @@ class AulaSensor(Entity):
                 "14",
                 "15",
             ]
-            daily_info = self._client._daily_overview[str(self._child["id"])]
-            return states[daily_info["status"]]
+            daily_info = self._client._daily_overview[
+                AulaChildId(str(self._child["id"]))
+            ]
+            return states[int(daily_info["status"])]
         else:
             _LOGGER.debug("Setting state to n/a for child " + str(self._child["id"]))
             return "n/a"
 
     @property
-    def extra_state_attributes(self):
-        if self._client.presence[str(self._child["id"])] == 1:
-            daily_info = self._client._daily_overview[str(self._child["id"])]
+    def extra_state_attributes(self) -> dict[str, Any]:
+        if self._client.presence[AulaChildId(str(self._child["id"]))] == 1:
+            daily_info = self._client._daily_overview[
+                AulaChildId(str(self._child["id"]))
+            ]
             try:
                 profilePicture = daily_info["institutionProfile"]["profilePicture"][
                     "url"
@@ -204,26 +205,28 @@ class AulaSensor(Entity):
             "selfDeciderStartTime",
             "selfDeciderEndTime",
         ]
-        attributes = {}
+        attributes: dict[str, Any] = {}
         # _LOGGER.debug("Dump of ugep_attr: "+str(self._client.ugep_attr))
         # _LOGGER.debug("Dump of ugepnext_attr: "+str(self._client.ugepnext_attr))
         if ugeplan:
             if "0062" in self._client.widgets:
                 try:
                     attributes["huskelisten"] = self._client.huskeliste[
-                        self._child["first_name"]
+                        AulaChildFirstName(self._child["first_name"])
                     ]
                 except:
                     attributes["huskelisten"] = "Not available"
 
             try:
-                child_ugeplan = self._client.ugep_attr[self._child["first_name"]]
+                child_ugeplan = self._client.ugep_attr[
+                    AulaChildFirstName(self._child["first_name"])
+                ]
             except:
                 child_ugeplan = None
 
             try:
                 child_ugeplan_next = self._client.ugepnext_attr[
-                    self._child["first_name"]
+                    AulaChildFirstName(self._child["first_name"])
                 ]
             except:
                 child_ugeplan_next = None
@@ -235,7 +238,9 @@ class AulaSensor(Entity):
 
             if rawugeplan and "0001" in self._client.widgets:
 
-                def parse_easyiq_ugeplan(ugeplan_json: dict, varname: str):
+                def parse_easyiq_ugeplan(
+                    ugeplan_json: dict[str, Any], varname: str
+                ) -> None:
                     attribute_prefix = f"easyiq_{varname}"
 
                     try:
@@ -303,7 +308,7 @@ class AulaSensor(Entity):
                     child_ugeplan_next if child_ugeplan_next else "Not available"
                 )
 
-        if self._client.presence[str(self._child["id"])] == 1:
+        if self._client.presence[AulaChildId(str(self._child["id"]))] == 1:
             for attribute in fields:
                 if attribute == "exitTime" and daily_info[attribute] == "23:59:00":
                     attributes[attribute] = None
@@ -319,30 +324,30 @@ class AulaSensor(Entity):
         return attributes
 
     @property
-    def should_poll(self):
+    def should_poll(self) -> bool:
         """No need to poll. Coordinator notifies entity of updates."""
         return False
 
     @property
-    def available(self):
+    def available(self) -> bool:
         """Return if entity is available."""
         return self._coordinator.last_update_success
 
     @property
-    def unique_id(self):
+    def unique_id(self) -> str:
         unique_id = "aula" + str(self._child["id"])
         _LOGGER.debug("Unique ID for child " + str(self._child["id"]) + " " + unique_id)
         return unique_id
 
     @property
-    def icon(self):
+    def icon(self) -> str:
         return "mdi:account-school"
 
-    async def async_update(self):
+    async def async_update(self) -> None:
         """Update the entity. Only used by the generic entity update service."""
         await self._coordinator.async_request_refresh()
 
-    async def async_added_to_hass(self):
+    async def async_added_to_hass(self) -> None:
         """When entity is added to hass."""
         self.async_on_remove(
             self._coordinator.async_add_listener(self.async_write_ha_state)
