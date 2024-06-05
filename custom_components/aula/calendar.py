@@ -151,7 +151,7 @@ class CalendarData:
             )
 
     def _parse_easyiq_ugep_attr(self, ugep_attr: dict) -> list[CalendarEvent]:
-        if not "Events" in ugep_attr:
+        if "Events" not in ugep_attr:
             return []
 
         return [
