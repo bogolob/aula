@@ -1,18 +1,20 @@
-from datetime import datetime, timedelta
 import logging
+from datetime import datetime, timedelta
 from typing import Optional
 
-from .const import CONF_SCHOOLSCHEDULE, DOMAIN
-from .client import Client
-
-from homeassistant.core import HomeAssistant
+from homeassistant.components.calendar import CalendarEntity, CalendarEvent
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.components.calendar import (
-    CalendarEntity,
-    CalendarEvent,
-)
 from homeassistant.util import Throttle, dt
+
+from .client import AulaChildFirstName, AulaChildId, Client
+from .const import (
+    CONF_EASYIQ_UGEPLAN_CALENDAR,
+    CONF_PARSE_EASYIQ_UGEPLAN,
+    CONF_SCHOOLSCHEDULE,
+    DOMAIN,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -28,7 +30,7 @@ async def async_setup_entry(
     if config_entry.options:
         config.update(config_entry.options)
 
-    if not config[CONF_SCHOOLSCHEDULE] == True:
+    if not config[CONF_SCHOOLSCHEDULE] and not (config[CONF_EASYIQ_UGEPLAN_CALENDAR] and config[CONF_PARSE_EASYIQ_UGEPLAN]):
         return
 
     client = hass.data[DOMAIN]["client"]
@@ -42,9 +44,9 @@ async def async_setup_entry(
     async_add_entities(calendar_devices)
 
 class CalendarDevice(CalendarEntity):
-    def __init__(self, hass: HomeAssistant, name: str, childid:str):
+    def __init__(self, hass: HomeAssistant, name: str, childid: AulaChildId):
         self._name = f"Skoleskema {name}"
-        self._first_name = name.split()[0]
+        self._first_name = AulaChildFirstName(name.split()[0])
         self._childid = childid
 
         self.data = CalendarData(hass, self._childid, self._first_name)
@@ -74,7 +76,7 @@ class CalendarDevice(CalendarEntity):
         return list(filter(lambda event: event.end > start_date and event.start < end_date, self.data.all_events))
 
 class CalendarData:
-    def __init__(self, hass: HomeAssistant, childid: str, first_name: str):
+    def __init__(self, hass: HomeAssistant, childid: AulaChildId, first_name: AulaChildFirstName):
         self.event: Optional[CalendarEvent] = None
 
         self._hass = hass
@@ -168,7 +170,7 @@ class CalendarData:
         return events
 
     @Throttle(MIN_TIME_BETWEEN_UPDATES)
-    def update(self):
+    def update(self) -> None:
         _LOGGER.debug("Updating calendars...")
 
         self.all_events = []

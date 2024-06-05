@@ -1,21 +1,27 @@
 import logging
 from typing import Any, Optional
 
-from homeassistant.config_entries import (
-    ConfigFlow,
-    OptionsFlow,
-    ConfigEntry,
-    ConfigFlowResult,
-)
-from homeassistant.const import CONF_USERNAME, CONF_PASSWORD
 import homeassistant.helpers.config_validation as cv
+import voluptuous as vol
+from homeassistant.config_entries import (
+    ConfigEntry,
+    ConfigFlow,
+    ConfigFlowResult,
+    OptionsFlow,
+)
+from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
 from homeassistant.helpers.entity_registry import (
     async_entries_for_config_entry,
     async_get,
 )
-import voluptuous as vol
 
-from .const import CONF_SCHOOLSCHEDULE, CONF_UGEPLAN, CONF_RAWUGEPLAN, DOMAIN
+from .const import (
+    CONF_EASYIQ_UGEPLAN_CALENDAR,
+    CONF_PARSE_EASYIQ_UGEPLAN,
+    CONF_SCHOOLSCHEDULE,
+    CONF_UGEPLAN,
+    DOMAIN,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -23,15 +29,19 @@ AUTH_SCHEMA = vol.Schema(
     {
         vol.Required(CONF_USERNAME): cv.string,
         vol.Required(CONF_PASSWORD): cv.string,
-        vol.Optional("schoolschedule"): cv.boolean,
-        vol.Optional("ugeplan"): cv.boolean,
-        vol.Optional("rawugeplan"): cv.boolean,
+        vol.Optional(CONF_SCHOOLSCHEDULE, default=False): cv.boolean,
+        vol.Optional(CONF_UGEPLAN, default=False): cv.boolean,
+        vol.Optional(CONF_PARSE_EASYIQ_UGEPLAN, default=False): cv.boolean,
+        vol.Optional(CONF_EASYIQ_UGEPLAN_CALENDAR, default=False): cv.boolean,
     }
 )
 
 
 class AulaCustomConfigFlow(ConfigFlow, domain=DOMAIN):
     """Aula Custom config flow."""
+
+    VERSION = 1
+    MINOR_VERSION = 1
 
     data: Optional[dict[str, Any]]
 
@@ -40,27 +50,32 @@ class AulaCustomConfigFlow(ConfigFlow, domain=DOMAIN):
     ) -> ConfigFlowResult:
         """Invoked when a user initiates a flow via the user interface."""
         errors: dict[str, str] = {}
+
         if user_input is not None:
             self.data = user_input
-            _LOGGER.debug(user_input.get("schoolschedule"))
-            if user_input.get("schoolschedule") == None:
+
+            _LOGGER.debug(self.data.get(CONF_SCHOOLSCHEDULE))
+            if self.data.get(CONF_SCHOOLSCHEDULE) is None:
                 self.data[CONF_SCHOOLSCHEDULE] = False
-            else:
-                self.data[CONF_SCHOOLSCHEDULE] = user_input.get("schoolschedule")
-            _LOGGER.debug(user_input.get("ugeplan"))
-            if user_input.get("ugeplan") == None:
+
+            _LOGGER.debug(self.data.get(CONF_UGEPLAN))
+            if self.data.get(CONF_UGEPLAN) is None:
                 self.data[CONF_UGEPLAN] = False
-            else:
-                self.data[CONF_UGEPLAN] = user_input.get("ugeplan")
-            if user_input.get("rawugeplan") == None:
-                self.data[CONF_RAWUGEPLAN] = False
-            else:
-                self.data[CONF_UGEPLAN] = user_input.get("rawugeplan")
+
+            _LOGGER.debug(self.data.get(CONF_PARSE_EASYIQ_UGEPLAN))
+            if self.data.get(CONF_PARSE_EASYIQ_UGEPLAN) is None:
+                self.data[CONF_PARSE_EASYIQ_UGEPLAN] = False
+
+            _LOGGER.debug(self.data.get(CONF_EASYIQ_UGEPLAN_CALENDAR))
+            if self.data.get(CONF_EASYIQ_UGEPLAN_CALENDAR) is None:
+                self.data[CONF_EASYIQ_UGEPLAN_CALENDAR] = False
+
             # This will log password in plain text: _LOGGER.debug(self.data)
+
             return self.async_create_entry(title="Aula", data=self.data)
 
         return self.async_show_form(
-            step_id="user", data_schema=AUTH_SCHEMA, errors=errors
+            step_id="user", data_schema=AUTH_SCHEMA, errors=errors, last_step=True
         )
 
 
@@ -85,7 +100,7 @@ class OptionsFlowHandler(OptionsFlow):
         """Manage the options."""
         _LOGGER.debug("Options......")
         _LOGGER.debug(self.config_entry)
-        entity_registry = await async_get(self.hass)
+        entity_registry = async_get(self.hass)
         entries = async_entries_for_config_entry(
             entity_registry, self.config_entry.entry_id
         )

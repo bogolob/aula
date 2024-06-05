@@ -49,13 +49,13 @@ class Client:
         password: str,
         schoolschedule: bool,
         ugeplan: bool,
-        rawugeplan: bool,
+        parse_easyiq_ugeplan: bool,
     ):
         self._username = username
         self._password = password
         self._schoolschedule = schoolschedule
         self._ugeplan = ugeplan
-        self._rawugeplan = rawugeplan
+        self._parse_easyiq_ugeplan = parse_easyiq_ugeplan
 
     def custom_api_call(self, uri: str, post_data: Optional[str]) -> dict[str, str]:
         csrf_token = self._session.cookies.get_dict()["Csrfp-Token"]
@@ -211,8 +211,8 @@ class Client:
             + str(self._schoolschedule)
             + ", config - ugeplaner: "
             + str(self._ugeplan)
-            + ", config - rawugeplan: "
-            + str(self._rawugeplan)
+            + ", config - parse_easyiq_ugeplan: "
+            + str(self._parse_easyiq_ugeplan)
         )
 
     def get_widgets(self) -> None:
@@ -562,7 +562,8 @@ class Client:
                             "EasyIQ Opgaver response " + str(ugeplaner.json())
                         )
 
-                        if self._rawugeplan:
+                        if self._parse_easyiq_ugeplan:
+                            # Return raw JSON here, it will be parsed in calendar/sensor flows
                             _ugep = ugeplaner.json()
                         else:
                             _ugep = (

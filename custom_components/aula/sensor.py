@@ -22,7 +22,7 @@ from homeassistant.util.json import (
 )
 
 from .client import AulaChildFirstName, AulaChildId, Client
-from .const import CONF_RAWUGEPLAN, CONF_SCHOOLSCHEDULE, CONF_UGEPLAN, DOMAIN
+from .const import CONF_PARSE_EASYIQ_UGEPLAN, CONF_SCHOOLSCHEDULE, CONF_UGEPLAN, DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -54,7 +54,7 @@ async def async_setup_entry(
         config[CONF_PASSWORD],
         config[CONF_SCHOOLSCHEDULE],
         config[CONF_UGEPLAN],
-        config[CONF_RAWUGEPLAN],
+        config[CONF_PARSE_EASYIQ_UGEPLAN],
     )
     hass.data[DOMAIN]["client"] = client
 
@@ -80,10 +80,10 @@ async def async_setup_entry(
     else:
         ugeplan = False
 
-    if config[CONF_RAWUGEPLAN]:
-        rawugeplan = True
+    if config[CONF_PARSE_EASYIQ_UGEPLAN]:
+        parse_easyiq_ugeplan = True
     else:
-        rawugeplan = False
+        parse_easyiq_ugeplan = False
 
     for i, child in enumerate(client._children):
         # _LOGGER.debug("Presence data for child "+str(child["id"])+" : "+str(client.presence[str(child["id"])]))
@@ -95,10 +95,12 @@ async def async_setup_entry(
                     + " adding sensor entity."
                 )
                 entities.append(
-                    AulaSensor(hass, coordinator, child, ugeplan, rawugeplan)
+                    AulaSensor(hass, coordinator, child, ugeplan, parse_easyiq_ugeplan)
                 )
         else:
-            entities.append(AulaSensor(hass, coordinator, child, ugeplan, rawugeplan))
+            entities.append(
+                AulaSensor(hass, coordinator, child, ugeplan, parse_easyiq_ugeplan)
+            )
     # We have data and can now set up the calendar platform:
     if config[CONF_SCHOOLSCHEDULE]:
         hass.async_create_task(
@@ -145,16 +147,16 @@ class AulaSensor(Entity):
     def __init__(
         self,
         hass: HomeAssistant,
-        coordinator: DataUpdateCoordinator,
+        coordinator: DataUpdateCoordinator[None],
         child: dict,
         ugeplan: bool,
-        rawugeplan: bool,
+        parse_easyiq_ugeplan: bool,
     ) -> None:
         self._hass = hass
         self._coordinator = coordinator
         self._child = child
         self._ugeplan = ugeplan
-        self._rawugeplan = rawugeplan
+        self._parse_easyiq_ugeplan = parse_easyiq_ugeplan
         self._client: Client = hass.data[DOMAIN]["client"]
 
     @property
@@ -259,7 +261,7 @@ class AulaSensor(Entity):
                     + ". Perhaps not available yet."
                 )
 
-            if self._rawugeplan and "0001" in self._client.widgets:
+            if self._parse_easyiq_ugeplan and "0001" in self._client.widgets:
 
                 def parse_easyiq_ugeplan(
                     ugeplan_json: dict[str, Any], varname: str
