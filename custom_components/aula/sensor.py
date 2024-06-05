@@ -15,6 +15,11 @@ from homeassistant.core import (
 from homeassistant.helpers.entity import Entity
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
+from homeassistant.util.json import (
+    JSON_DECODE_EXCEPTIONS,
+    JsonObjectType,
+    json_loads_object,
+)
 
 from .client import AulaChildFirstName, AulaChildId, Client
 from .const import CONF_RAWUGEPLAN, CONF_SCHOOLSCHEDULE, CONF_UGEPLAN, DOMAIN
@@ -70,6 +75,16 @@ async def async_setup_entry(
 
     entities = []
 
+    if config[CONF_UGEPLAN]:
+        ugeplan = True
+    else:
+        ugeplan = False
+
+    if config[CONF_RAWUGEPLAN]:
+        rawugeplan = True
+    else:
+        rawugeplan = False
+
     for i, child in enumerate(client._children):
         # _LOGGER.debug("Presence data for child "+str(child["id"])+" : "+str(client.presence[str(child["id"])]))
         if client.presence[AulaChildId(str(child["id"]))] == 1:
@@ -79,9 +94,11 @@ async def async_setup_entry(
                     + str(child["id"])
                     + " adding sensor entity."
                 )
-                entities.append(AulaSensor(hass, coordinator, child))
+                entities.append(
+                    AulaSensor(hass, coordinator, child, ugeplan, rawugeplan)
+                )
         else:
-            entities.append(AulaSensor(hass, coordinator, child))
+            entities.append(AulaSensor(hass, coordinator, child, ugeplan, rawugeplan))
     # We have data and can now set up the calendar platform:
     if config[CONF_SCHOOLSCHEDULE]:
         hass.async_create_task(
@@ -93,18 +110,6 @@ async def async_setup_entry(
     )
     ####
 
-    global ugeplan
-    global rawugeplan
-    if config[CONF_UGEPLAN]:
-        ugeplan = True
-    else:
-        ugeplan = False
-
-    if config[CONF_RAWUGEPLAN]:
-        rawugeplan = True
-    else:
-        rawugeplan = False
-
     async_add_entities(entities, update_before_add=True)
 
     def custom_api_call_service(call: ServiceCall) -> ServiceResponse:
@@ -112,7 +117,20 @@ async def async_setup_entry(
             data = client.custom_api_call(call.data["uri"], call.data["post_data"])
         else:
             data = client.custom_api_call(call.data["uri"], None)
-        return data
+
+        ret: JsonObjectType
+
+        if "error" in data:
+            ret = {"error": data["error"]}
+        elif "response" in data:
+            try:
+                ret = json_loads_object(data["response"])
+            except JSON_DECODE_EXCEPTIONS:
+                ret = {"response": data["response"]}
+        else:
+            return None
+
+        return ret
 
     hass.services.async_register(
         DOMAIN,
@@ -125,11 +143,18 @@ async def async_setup_entry(
 
 class AulaSensor(Entity):
     def __init__(
-        self, hass: HomeAssistant, coordinator: DataUpdateCoordinator, child: dict
+        self,
+        hass: HomeAssistant,
+        coordinator: DataUpdateCoordinator,
+        child: dict,
+        ugeplan: bool,
+        rawugeplan: bool,
     ) -> None:
         self._hass = hass
         self._coordinator = coordinator
         self._child = child
+        self._ugeplan = ugeplan
+        self._rawugeplan = rawugeplan
         self._client: Client = hass.data[DOMAIN]["client"]
 
     @property
@@ -206,7 +231,7 @@ class AulaSensor(Entity):
         attributes: dict[str, Any] = {}
         # _LOGGER.debug("Dump of ugep_attr: "+str(self._client.ugep_attr))
         # _LOGGER.debug("Dump of ugepnext_attr: "+str(self._client.ugepnext_attr))
-        if ugeplan:
+        if self._ugeplan:
             if "0062" in self._client.widgets:
                 try:
                     attributes["huskelisten"] = self._client.huskeliste[
@@ -234,7 +259,7 @@ class AulaSensor(Entity):
                     + ". Perhaps not available yet."
                 )
 
-            if rawugeplan and "0001" in self._client.widgets:
+            if self._rawugeplan and "0001" in self._client.widgets:
 
                 def parse_easyiq_ugeplan(
                     ugeplan_json: dict[str, Any], varname: str

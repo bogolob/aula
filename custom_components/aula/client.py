@@ -57,12 +57,12 @@ class Client:
         self._ugeplan = ugeplan
         self._rawugeplan = rawugeplan
 
-    def custom_api_call(self, uri: str, post_data: Optional[str]) -> Any:
+    def custom_api_call(self, uri: str, post_data: Optional[str]) -> dict[str, str]:
         csrf_token = self._session.cookies.get_dict()["Csrfp-Token"]
         headers = {"csrfp-token": csrf_token, "content-type": "application/json"}
         _LOGGER.debug("custom_api_call: Making API call to " + self.apiurl + uri)
         if post_data is None:
-            response = self._session.get(
+            response: requests.Response = self._session.get(
                 self.apiurl + uri, headers=headers, verify=True
             )
         else:
@@ -71,7 +71,7 @@ class Client:
                 json.loads(post_data)
             except json.JSONDecodeError:
                 _LOGGER.error("Invalid json supplied as post_data")
-                error_msg = {"result": "Fail - invalid json supplied as post_data"}
+                error_msg = {"error": "Fail - invalid json supplied as post_data"}
                 return error_msg
             _LOGGER.debug(f"custom_api_call: post_data: {post_data}")
             response = self._session.post(
@@ -81,12 +81,8 @@ class Client:
                 verify=True,
             )
         _LOGGER.debug(response.text)
-        try:
-            res = response.json()
-        except requests.exceptions.JSONDecodeError:
-            res = {"raw_response": response.text}
 
-        return res
+        return {"response": response.text}
 
     def login(self) -> None:
         _LOGGER.debug("Logging in")
