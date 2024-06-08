@@ -17,6 +17,7 @@ from homeassistant.loader import async_get_integration
 
 from .client import Client
 from .const import (
+    CONF_EASYIQ_UGEPLAN_CALENDAR,
     CONF_PARSE_EASYIQ_UGEPLAN,
     CONF_SCHOOLSCHEDULE,
     CONF_UGEPLAN,
@@ -66,6 +67,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: AulaConfigEntry) -> bool
     schoolschedule: bool = entry.data[CONF_SCHOOLSCHEDULE]
     ugeplan: bool = entry.data[CONF_UGEPLAN]
     parse_easyiq_ugeplan: bool = entry.data[CONF_PARSE_EASYIQ_UGEPLAN]
+    easyiq_ugeplan_calendar: bool = entry.data[CONF_EASYIQ_UGEPLAN_CALENDAR]
 
     integration = await async_get_integration(hass, DOMAIN)
     _LOGGER.info(STARTUP, integration.version)
@@ -77,7 +79,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: AulaConfigEntry) -> bool
     hass_data["unsub_options_update_listener"] = unsub_options_update_listener
     hass.data[DOMAIN][entry.entry_id] = hass_data
 
-    client = Client(username, password, schoolschedule, ugeplan, parse_easyiq_ugeplan)
+    client = Client(
+        username,
+        password,
+        schoolschedule,
+        ugeplan,
+        parse_easyiq_ugeplan,
+        easyiq_ugeplan_calendar,
+    )
 
     async def async_update_data() -> None:
         await hass.async_add_executor_job(client.update_data)

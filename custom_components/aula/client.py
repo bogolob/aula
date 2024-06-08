@@ -2,13 +2,20 @@ import json
 import logging
 import re
 from datetime import datetime, timedelta, timezone
-from typing import Any, NewType, Optional
+from typing import Any, Optional
 
 import pytz
 import requests
 from bs4 import BeautifulSoup
 from homeassistant.exceptions import ConfigEntryNotReady
 
+from .calendardata import AulaCalendarData
+from .clienttypes import (
+    AulaChildFirstName,
+    AulaChildId,
+    AulaChildUserId,
+    AulaInstitutionId,
+)
 from .const import (
     API,
     API_VERSION,
@@ -16,15 +23,12 @@ from .const import (
     MEEBOOK_API,
     MIN_UDDANNELSE_API,
     SYSTEMATIC_API,
+    TIME_BETWEEN_CALENDAR_UPDATES,
     TIME_BETWEEN_UGEPLAN_UPDATES,
 )
 
 _LOGGER = logging.getLogger(__name__)
 
-AulaChildId = NewType("AulaChildId", str)
-AulaChildUserId = NewType("AulaChildUserId", str)
-AulaChildFirstName = NewType("AulaChildFirstName", str)
-AulaInstitutionId = NewType("AulaInstitutionId", str)
 
 class Client:
     huskeliste: dict[AulaChildFirstName, str] = {}
@@ -33,6 +37,7 @@ class Client:
     ugepnext_attr: dict[AulaChildFirstName, Any] = {}
     widgets: dict[str, str] = {}
     tokens: dict[str, tuple[str, datetime]] = {}
+    child_calendar_data: dict[AulaChildId, AulaCalendarData] = {}
 
     _childids: list[AulaChildId]
     _childuserids: list[AulaChildUserId]
@@ -43,6 +48,8 @@ class Client:
     _institutionProfiles: set[AulaInstitutionId]
 
     _last_ugeplan_update: datetime = datetime.min
+    _last_calendar_update: datetime = datetime.min
+    _last_calendar_json: Any = None
 
     _session: requests.Session
 
@@ -53,12 +60,14 @@ class Client:
         schoolschedule: bool,
         ugeplan: bool,
         parse_easyiq_ugeplan: bool,
+        easyiq_ugeplan_calendar: bool
     ):
         self._username = username
         self._password = password
         self._schoolschedule = schoolschedule
         self._ugeplan = ugeplan
         self._parse_easyiq_ugeplan = parse_easyiq_ugeplan
+        self._easyiq_ugeplan_calendar = easyiq_ugeplan_calendar
 
     def custom_api_call(self, uri: str, post_data: Optional[str]) -> dict[str, str]:
         csrf_token = self._session.cookies.get_dict()["Csrfp-Token"]
@@ -248,7 +257,7 @@ class Client:
         self.tokens[widgetid] = (token, datetime.now(pytz.utc))
         return token
 
-    def load_profiles(self) -> None:
+    def _load_profiles(self) -> None:
         self._childfirstnames = {}
         self._institutions = {}
         self._childuserids = []
@@ -285,7 +294,7 @@ class Client:
         _LOGGER.debug("Child ids and institution names: " + str(self._institutions))
         _LOGGER.debug("Institution codes: " + str(self._institutionProfiles))
 
-    def load_statuses(self) -> None:
+    def _load_statuses(self) -> None:
         self._daily_overview = {}
 
         for childid in self._childids:
@@ -305,7 +314,7 @@ class Client:
 
         _LOGGER.debug("Child ids and presence data status: " + str(self.presence))
 
-    def load_messages(self) -> None:
+    def _load_messages(self) -> None:
         # Messages:
         mesres = self._session.get(
             self.apiurl
@@ -365,7 +374,7 @@ class Client:
                         self.unread_messages = 1
                         break
 
-    def load_calendar(self) -> None:
+    def _load_calendar(self) -> Any:
         # Calendar:
         if self._schoolschedule:
             instProfileIds = ",".join(self._childids)
@@ -396,16 +405,17 @@ class Client:
                 verify=True,
             )
             try:
-                with open("skoleskema.json", "w") as skoleskema_json:
-                    json.dump(res.text, skoleskema_json)
-            except:
+                self._last_calendar_json = res.json()
+                self._last_calendar_update = datetime.now()
+            except requests.exceptions.JSONDecodeError:
                 _LOGGER.warn(
                     "Got the following reply when trying to fetch calendars: "
                     + str(res.text)
                 )
+
         # End of calendar
 
-    def load_ugeplan(self) -> None:
+    def _load_ugeplan(self) -> None:
                 # Ugeplaner:
         if self._ugeplan:
             guardian = self._session.get(
@@ -797,11 +807,34 @@ class Client:
             ugeplan(thisweek, "this")
             ugeplan(nextweek, "next")
             # _LOGGER.debug("End result of ugeplan object: "+str(self.ugep_attr))
+
+        self._last_ugeplan_update = datetime.now()
         # End of Ugeplaner
 
-    def should_load_ugeplan(self) -> bool:
+    def _parse_calendar_data(self) -> None:
+        self.child_calendar_data = {}
+
+        for child_id in self._childids:
+            _LOGGER.debug(f"Parsing calendar data for {child_id}")
+            calendar_data = AulaCalendarData(child_id, self._childfirstnames[child_id])
+
+            if self._last_calendar_json is not None:
+                calendar_data.load_skoleskema_json(self._last_calendar_json)
+
+            if self._parse_easyiq_ugeplan and self._easyiq_ugeplan_calendar:
+                calendar_data.load_easyiq_calendar_events(self.ugep_attr, self.ugepnext_attr)
+
+            self.child_calendar_data[child_id] = calendar_data
+
+    def _should_load_ugeplan(self) -> bool:
         time_since_last_update: timedelta = datetime.now() - self._last_ugeplan_update
+        _LOGGER.debug(f"Time since last ugeplan update: {time_since_last_update}")
         return time_since_last_update >= TIME_BETWEEN_UGEPLAN_UPDATES
+
+    def _should_load_calendar(self) -> bool:
+        time_since_last_update: timedelta = datetime.now() - self._last_calendar_update
+        _LOGGER.debug(f"Time since last calendar update: {time_since_last_update}")
+        return time_since_last_update >= TIME_BETWEEN_CALENDAR_UPDATES
 
     def update_data(self) -> None:
         is_logged_in = False
@@ -819,10 +852,19 @@ class Client:
         if not is_logged_in:
             self.login()
 
-        self.load_profiles()
-        self.load_statuses()
-        self.load_messages()
-        self.load_calendar()
+        self._load_profiles()
+        self._load_statuses()
+        self._load_messages()
 
-        if self.should_load_ugeplan():
-            self.load_ugeplan()
+        parse_calendar_data = False
+        if self._should_load_calendar():
+            self._last_calendar_json = self._load_calendar()
+            parse_calendar_data = True
+
+        if self._should_load_ugeplan():
+            self._load_ugeplan()
+            parse_calendar_data = True
+
+        if parse_calendar_data:
+            self._parse_calendar_data()
+            _LOGGER.debug("Calendar data loaded for %s: %s", self.child_calendar_data.keys(), [(child_id, len(cd.all_events)) for child_id, cd in self.child_calendar_data.items()])
