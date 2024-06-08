@@ -55,5 +55,21 @@
         "title": "Login"
       }
     }
+  },
+  "entity": {
+    "sensor": {
+      "aulapresence": {
+        "state": {
+          "ikke_kommet": "Ikke kommet",
+          "syg": "Syg",
+          "ferie_fri": "Ferie/fri",
+          "kommet": "Kommet",
+          "paa_tur": "På tur",
+          "sover": "Sover",
+          "hentet_gaaet": "Hentet/gået",
+          "n_a": "n/a"
+        }
+      }
+    }
   }
 }

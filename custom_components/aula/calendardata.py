@@ -86,11 +86,11 @@ class AulaCalendarData:
         events: list[CalendarEvent] = []
 
         if ugep_attr and self._first_name in ugep_attr:
-            _LOGGER.debug(f"Loading EasyIQ calendar events from ugep_attr")
+            _LOGGER.debug("Loading EasyIQ calendar events from ugep_attr")
             events += self._parse_easyiq_ugep_attr(ugep_attr[self._first_name])
 
         if ugepnext_attr and self._first_name in ugepnext_attr:
-            _LOGGER.debug(f"Loading EasyIQ calendar events from ugepnext_attr")
+            _LOGGER.debug("Loading EasyIQ calendar events from ugepnext_attr")
             events += self._parse_easyiq_ugep_attr(ugepnext_attr[self._first_name])
 
         self.all_events += events

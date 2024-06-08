@@ -55,5 +55,21 @@
         "title": "Options"
       }
     }
+  },
+  "entity": {
+    "sensor": {
+      "aulapresence": {
+        "state": {
+          "ikke_kommet": "Not arrived",
+          "syg": "Sick",
+          "ferie_fri": "Vacation/free",
+          "kommet": "Present",
+          "paa_tur": "On tour",
+          "sover": "Sleeping",
+          "hentet_gaaet": "Picked up/left",
+          "n_a": "n/a"
+        }
+      }
+    }
   }
 }

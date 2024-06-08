@@ -4,7 +4,7 @@ from typing import Any
 
 import homeassistant.helpers.config_validation as cv
 import voluptuous as vol
-from homeassistant.components.sensor import SensorEntity
+from homeassistant.components.sensor import SensorDeviceClass, SensorEntity
 from homeassistant.core import (
     HomeAssistant,
     ServiceCall,
@@ -21,7 +21,8 @@ from homeassistant.util.json import (
 )
 
 from . import AulaConfigEntry, AulaEntity
-from .client import AulaChildFirstName, AulaChildId, Client
+from .client import Client
+from .clienttypes import AulaChildFirstName, AulaChildId, AulaChildPresenceType
 from .const import CONF_PARSE_EASYIQ_UGEPLAN, CONF_UGEPLAN, DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
@@ -33,6 +34,19 @@ API_CALL_SCHEMA = vol.Schema(
         vol.Optional("post_data"): cv.string,
     }
 )
+
+STATE_NOT_AVAILABLE = "n_a"
+
+AULACHILDPRESENCETYPE_TO_STATE_MAPPING = {
+    AulaChildPresenceType.IKKE_KOMMET: "ikke_kommet",
+    AulaChildPresenceType.SYG: "syg",
+    AulaChildPresenceType.FERIE_FRI: "ferie_fri",
+    AulaChildPresenceType.KOMMET: "kommet",
+    AulaChildPresenceType.PAA_TUR: "paa_tur",
+    AulaChildPresenceType.SOVER: "sover",
+    AulaChildPresenceType.HENTET_GAAET: "hentet_gaaet",
+    AulaChildPresenceType.UNKNOWN: STATE_NOT_AVAILABLE,
+}
 
 
 async def async_setup_entry(
@@ -122,6 +136,11 @@ async def async_setup_entry(
 
 
 class AulaSensor(AulaEntity, SensorEntity):
+
+    _attr_device_class = SensorDeviceClass.ENUM
+    _attr_options = list(AULACHILDPRESENCETYPE_TO_STATE_MAPPING.values())
+    _attr_translation_key = "aulapresence"
+
     def __init__(
         self,
         hass: HomeAssistant,
@@ -148,41 +167,21 @@ class AulaSensor(AulaEntity, SensorEntity):
 
     @property
     def native_value(self) -> StateType:
-        """
-        0 = IKKE KOMMET
-        1 = SYG
-        2 = FERIE/FRI
-        3 = KOMMET/TIL STEDE
-        4 = PÅ TUR
-        5 = SOVER
-        8 = HENTET/GÅET
-        """
         if self._client.presence[AulaChildId(str(self._child["id"]))] == 1:
-            states: list[str] = [
-                "Ikke kommet",
-                "Syg",
-                "Ferie/Fri",
-                "Kommet/Til stede",
-                "På tur",
-                "Sover",
-                "6",
-                "7",
-                "Gået",
-                "9",
-                "10",
-                "11",
-                "12",
-                "13",
-                "14",
-                "15",
-            ]
             daily_info = self._client._daily_overview[
                 AulaChildId(str(self._child["id"]))
             ]
-            return states[int(daily_info["status"])]
+
+            daily_info_status = int(daily_info["status"])
+            if daily_info_status not in AulaChildPresenceType:
+                daily_info_status = AulaChildPresenceType.UNKNOWN
+
+            return AULACHILDPRESENCETYPE_TO_STATE_MAPPING[
+                AulaChildPresenceType(daily_info_status)
+            ]
         else:
             _LOGGER.debug("Setting state to n/a for child " + str(self._child["id"]))
-            return "n/a"
+            return STATE_NOT_AVAILABLE
 
     @property
     def extra_state_attributes(self) -> dict[str, Any] | None:
