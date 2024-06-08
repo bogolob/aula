@@ -26,8 +26,7 @@
           "username": "Unilogin brugernavn",
           "password": "Unilogin password",
           "schoolschedule": "Tilføj skoleskemaer som kalender entiteter?",
-          "ugeplan": "Tilføj ugeplaner som sensor attributter?",
-          "rawugeplan": "Use raw JSON for ugeplaner data?"
+          "ugeplan": "Tilføj ugeplaner som sensor attributter?"
         },
         "description": "Indtast dine Unilogin oplysninger",
         "title": "Login"
@@ -50,8 +49,7 @@
       "options": {
         "data": {
           "schoolschedule": "Tilføj skoleskemaer som kalender entiteter?",
-          "ugeplan": "Tilføj ugeplaner som sensor attributter?",
-          "rawugeplan": "Use raw JSON for ugeplaner data?"
+          "ugeplan": "Tilføj ugeplaner som sensor attributter?"
         },
         "description": "",
         "title": "Login"

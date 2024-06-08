@@ -1,7 +1,7 @@
-import datetime
 import json
 import logging
 import re
+from datetime import datetime, timedelta, timezone
 from typing import Any, NewType, Optional
 
 import pytz
@@ -16,6 +16,7 @@ from .const import (
     MEEBOOK_API,
     MIN_UDDANNELSE_API,
     SYSTEMATIC_API,
+    TIME_BETWEEN_UGEPLAN_UPDATES,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -31,7 +32,7 @@ class Client:
     ugep_attr: dict[AulaChildFirstName, Any] = {}
     ugepnext_attr: dict[AulaChildFirstName, Any] = {}
     widgets: dict[str, str] = {}
-    tokens: dict[str, tuple[str, datetime.datetime]] = {}
+    tokens: dict[str, tuple[str, datetime]] = {}
 
     _childids: list[AulaChildId]
     _childuserids: list[AulaChildUserId]
@@ -40,6 +41,8 @@ class Client:
     _daily_overview: dict[AulaChildId, Any]
     _institutions: dict[AulaChildId, AulaInstitutionId]
     _institutionProfiles: set[AulaInstitutionId]
+
+    _last_ugeplan_update: datetime = datetime.min
 
     _session: requests.Session
 
@@ -228,8 +231,8 @@ class Client:
     def get_token(self, widgetid: str, mock: bool = False) -> str:
         if widgetid in self.tokens:
             token, timestamp = self.tokens[widgetid]
-            current_time = datetime.datetime.now(pytz.utc)
-            if current_time - timestamp < datetime.timedelta(minutes=1):
+            current_time = datetime.now(pytz.utc)
+            if current_time - timestamp < timedelta(minutes=1):
                 _LOGGER.debug("Reusing existing token for widget " + widgetid)
                 return token
         if mock:
@@ -242,29 +245,10 @@ class Client:
         ).json()["data"]
 
         token = "Bearer " + str(self._bearertoken)
-        self.tokens[widgetid] = (token, datetime.datetime.now(pytz.utc))
+        self.tokens[widgetid] = (token, datetime.now(pytz.utc))
         return token
 
-    ###
-
-    def update_data(self) -> None:
-        is_logged_in = False
-
-        try:
-            response = self._session.get(
-                self.apiurl + "?method=profiles.getProfilesByLogin", verify=True
-            ).json()
-            is_logged_in = response["status"]["message"] == "OK"
-        except AttributeError:
-            is_logged_in = False
-
-        _LOGGER.debug("is_logged_in? " + str(is_logged_in))
-
-        if not is_logged_in:
-            self.login()
-
-        assert isinstance(self._session, requests.Session)
-
+    def load_profiles(self) -> None:
         self._childfirstnames = {}
         self._institutions = {}
         self._childuserids = []
@@ -301,6 +285,7 @@ class Client:
         _LOGGER.debug("Child ids and institution names: " + str(self._institutions))
         _LOGGER.debug("Institution codes: " + str(self._institutionProfiles))
 
+    def load_statuses(self) -> None:
         self._daily_overview = {}
 
         for childid in self._childids:
@@ -320,6 +305,7 @@ class Client:
 
         _LOGGER.debug("Child ids and presence data status: " + str(self.presence))
 
+    def load_messages(self) -> None:
         # Messages:
         mesres = self._session.get(
             self.apiurl
@@ -379,15 +365,16 @@ class Client:
                         self.unread_messages = 1
                         break
 
+    def load_calendar(self) -> None:
         # Calendar:
         if self._schoolschedule:
             instProfileIds = ",".join(self._childids)
             csrf_token = self._session.cookies.get_dict()["Csrfp-Token"]
             headers = {"csrfp-token": csrf_token, "content-type": "application/json"}
-            start = datetime.datetime.now(datetime.timezone.utc).strftime(
+            start = datetime.now(timezone.utc).strftime(
                 "%Y-%m-%d 00:00:00.0000%z"
             )
-            _end = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(
+            _end = datetime.now(timezone.utc) + timedelta(
                 days=14
             )
             end = _end.strftime("%Y-%m-%d 00:00:00.0000%z")
@@ -418,7 +405,8 @@ class Client:
                 )
         # End of calendar
 
-        # Ugeplaner:
+    def load_ugeplan(self) -> None:
+                # Ugeplaner:
         if self._ugeplan:
             guardian = self._session.get(
                 self.apiurl + "?method=profiles.getProfileContext&portalrole=guardian",
@@ -594,7 +582,7 @@ class Client:
                                 date_string: str, format: str
                             ) -> bool:
                                 try:
-                                    datetime.datetime.strptime(date_string, format)
+                                    datetime.strptime(date_string, format)
                                     return True
                                 except ValueError:
                                     _LOGGER.debug(
@@ -605,11 +593,11 @@ class Client:
                             for i in ugeplaner.json()["Events"]:
                                 if is_correct_format(i["start"], "%Y/%m/%d %H:%M"):
                                     _LOGGER.debug("No Event")
-                                    start_datetime = datetime.datetime.strptime(
+                                    start_datetime = datetime.strptime(
                                         i["start"], "%Y/%m/%d %H:%M"
                                     )
                                     _LOGGER.debug(start_datetime)
-                                    end_datetime = datetime.datetime.strptime(
+                                    end_datetime = datetime.strptime(
                                         i["end"], "%Y/%m/%d %H:%M"
                                     )
                                     if start_datetime.date() == end_datetime.date():
@@ -672,22 +660,21 @@ class Client:
                         "zone": "Europe/Copenhagen",
                     }
 
-                    children = "&children=".join(self._childuserids)
-                    institutions = "&institutions=".join(self._institutionProfiles)
-                    timedelta = datetime.datetime.now() + datetime.timedelta(days=180)
-                    From = datetime.datetime.now().strftime("%Y-%m-%d")
-                    dueNoLaterThan = timedelta.strftime("%Y-%m-%d")
+                    reminders_children = "&children=".join(self._childuserids)
+                    reminders_institutions = "&institutions=".join(self._institutionProfiles)
+                    reminders_dueNoLaterThan = (datetime.now() + timedelta(days=180)).strftime("%Y-%m-%d")
+                    reminders_from = datetime.now().strftime("%Y-%m-%d")
                     get_payload = (
                         "/reminders/v1?children="
-                        + children
+                        + reminders_children
                         + "&from="
-                        + From
+                        + reminders_from
                         + "&dueNoLaterThan="
-                        + dueNoLaterThan
+                        + reminders_dueNoLaterThan
                         + "&widgetVersion=1.10&userProfile=guardian&sessionId="
                         + self._username
                         + "&institutions="
-                        + institutions
+                        + reminders_institutions
                     )
                     _LOGGER.debug(
                         "Huskelisten get_payload: " + SYSTEMATIC_API + get_payload
@@ -720,7 +707,7 @@ class Client:
                         reminders = person["teamReminders"]
                         if len(reminders) > 0:
                             for reminder in reminders:
-                                mytime = datetime.datetime.strptime(
+                                mytime = datetime.strptime(
                                     reminder["dueDate"], "%Y-%m-%dT%H:%M:%SZ"
                                 )
                                 ftime = mytime.strftime("%A %d. %B")
@@ -804,10 +791,38 @@ class Client:
                         elif thisnext == "next":
                             self.ugepnext_attr[name] = ugep
 
-            now = datetime.datetime.now() + datetime.timedelta(weeks=1)
-            thisweek = datetime.datetime.now().strftime("%Y-W%W")
+            now = datetime.now() + timedelta(weeks=1)
+            thisweek = datetime.now().strftime("%Y-W%W")
             nextweek = now.strftime("%Y-W%W")
             ugeplan(thisweek, "this")
             ugeplan(nextweek, "next")
             # _LOGGER.debug("End result of ugeplan object: "+str(self.ugep_attr))
         # End of Ugeplaner
+
+    def should_load_ugeplan(self) -> bool:
+        time_since_last_update: timedelta = datetime.now() - self._last_ugeplan_update
+        return time_since_last_update >= TIME_BETWEEN_UGEPLAN_UPDATES
+
+    def update_data(self) -> None:
+        is_logged_in = False
+
+        try:
+            response = self._session.get(
+                self.apiurl + "?method=profiles.getProfilesByLogin", verify=True
+            ).json()
+            is_logged_in = response["status"]["message"] == "OK"
+        except AttributeError:
+            is_logged_in = False
+
+        _LOGGER.debug("is_logged_in? " + str(is_logged_in))
+
+        if not is_logged_in:
+            self.login()
+
+        self.load_profiles()
+        self.load_statuses()
+        self.load_messages()
+        self.load_calendar()
+
+        if self.should_load_ugeplan():
+            self.load_ugeplan()

@@ -1,92 +1,74 @@
 import logging
-from datetime import datetime, timedelta
-from typing import Optional
+from datetime import datetime
+from typing import Optional, override
 
 from homeassistant.components.calendar import CalendarEntity, CalendarEvent
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.util import Throttle, dt
+from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
+from homeassistant.util import dt
 
+from . import AulaConfigEntry, AulaEntity
 from .client import AulaChildFirstName, AulaChildId, Client
 from .const import (
     CONF_EASYIQ_UGEPLAN_CALENDAR,
     CONF_PARSE_EASYIQ_UGEPLAN,
     CONF_SCHOOLSCHEDULE,
-    DOMAIN,
 )
 
 _LOGGER = logging.getLogger(__name__)
 
-MIN_TIME_BETWEEN_UPDATES = timedelta(minutes=10)
-PARALLEL_UPDATES = 1
-
 async def async_setup_entry(
     hass: HomeAssistant,
-    config_entry: ConfigEntry,
+    config_entry: AulaConfigEntry,
     async_add_entities: AddEntitiesCallback
 ) -> None:
-    config = hass.data[DOMAIN][config_entry.entry_id]
-    if config_entry.options:
-        config.update(config_entry.options)
-
-    if not config[CONF_SCHOOLSCHEDULE] and not (config[CONF_EASYIQ_UGEPLAN_CALENDAR] and config[CONF_PARSE_EASYIQ_UGEPLAN]):
+    if not config_entry.data[CONF_SCHOOLSCHEDULE] and not (config_entry.data[CONF_EASYIQ_UGEPLAN_CALENDAR] and config_entry.data[CONF_PARSE_EASYIQ_UGEPLAN]):
         return
 
-    client = hass.data[DOMAIN]["client"]
-    calendar_devices = []
+    client = config_entry.runtime_data.client
+    calendar_devices: list[CalendarDevice] = []
 
     for child in client._children:
         childid = child["id"]
-        name = child["name"]
-        calendar_devices.append(CalendarDevice(hass, name, childid))
+        first_name = AulaChildFirstName(child["name"].split()[0])
+        calendar_devices.append(CalendarDevice(hass, client, config_entry.runtime_data.coordinator, first_name, childid))
 
-    async_add_entities(calendar_devices)
+    async_add_entities(calendar_devices, True)
 
-class CalendarDevice(CalendarEntity):
-    def __init__(self, hass: HomeAssistant, name: str, childid: AulaChildId):
-        self._name = f"Skoleskema {name}"
-        self._first_name = AulaChildFirstName(name.split()[0])
-        self._childid = childid
-
-        self.data = CalendarData(hass, self._childid, self._first_name)
+class CalendarDevice(AulaEntity, CalendarEntity):
+    def __init__(self, hass: HomeAssistant, client: Client, coordinator: DataUpdateCoordinator[None], first_name: AulaChildFirstName, childid: AulaChildId):
+        super().__init__(client, coordinator, f"Skoleskema {first_name}", f"aulacalendar{childid}")
+        self.data = CalendarData(hass, client, childid, first_name)
 
     @property
     def event(self) -> Optional[CalendarEvent]:
         """Return the next upcoming event."""
         return self.data.event
 
-    @property
-    def name(self) -> str:
-        """Return the name of the entity."""
-        return self._name
+    @override
+    def _handle_coordinator_update(self) -> None:
+        super()._handle_coordinator_update()
 
-    @property
-    def unique_id(self) -> str:
-        unique_id = f"aulacalendar{str(self._childid)}"
-        _LOGGER.debug(f"Unique ID for calendar {self._childid} {unique_id}")
-        return unique_id
-
-    def update(self) -> None:
-        """Update all Calendars."""
-        self.data.update()
+        self.data.parse_skoleskema_json()
+        self.data.parse_easyiq_calendar_events()
 
     async def async_get_events(self, hass: HomeAssistant, start_date: datetime, end_date: datetime) -> list[CalendarEvent]:
         """Get all events in a specific time frame."""
         return list(filter(lambda event: event.end > start_date and event.start < end_date, self.data.all_events))
 
 class CalendarData:
-    def __init__(self, hass: HomeAssistant, childid: AulaChildId, first_name: AulaChildFirstName):
+    def __init__(self, hass: HomeAssistant, client: Client, childid: AulaChildId, first_name: AulaChildFirstName):
         self.event: Optional[CalendarEvent] = None
 
         self._hass = hass
+        self._client = client
         self._childid = childid
         self._first_name = first_name
 
         self.all_events: list[CalendarEvent] = []
-        self._client: Client = hass.data[DOMAIN]["client"]
 
-    def _parse_skoleskema_json(self) -> list[CalendarEvent]:
+    def parse_skoleskema_json(self) -> list[CalendarEvent]:
         events: list[CalendarEvent] = []
 
         import json
@@ -158,7 +140,7 @@ class CalendarData:
             calendar_event for easyiq_event in ugep_attr["Events"] if (calendar_event := CalendarData._easyiq_event_to_calendar_event(easyiq_event)) is not None
         ]
 
-    def _parse_easyiq_calendar_events(self) -> list[CalendarEvent]:
+    def parse_easyiq_calendar_events(self) -> list[CalendarEvent]:
         events: list[CalendarEvent] = []
 
         if self._client.ugep_attr and self._first_name in self._client.ugep_attr:
@@ -168,11 +150,3 @@ class CalendarData:
             events += self._parse_easyiq_ugep_attr(self._client.ugepnext_attr[self._first_name])
 
         return events
-
-    @Throttle(MIN_TIME_BETWEEN_UPDATES)
-    def update(self) -> None:
-        _LOGGER.debug("Updating calendars...")
-
-        self.all_events = []
-        self.all_events += self._parse_skoleskema_json()
-        self.all_events += self._parse_easyiq_calendar_events()

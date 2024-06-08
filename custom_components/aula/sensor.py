@@ -1,19 +1,18 @@
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Any
 
 import homeassistant.helpers.config_validation as cv
 import voluptuous as vol
-from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
+from homeassistant.components.sensor import SensorEntity
 from homeassistant.core import (
     HomeAssistant,
     ServiceCall,
     ServiceResponse,
     SupportsResponse,
 )
-from homeassistant.helpers.entity import Entity
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.typing import StateType
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util.json import (
     JSON_DECODE_EXCEPTIONS,
@@ -21,8 +20,9 @@ from homeassistant.util.json import (
     json_loads_object,
 )
 
+from . import AulaConfigEntry, AulaEntity
 from .client import AulaChildFirstName, AulaChildId, Client
-from .const import CONF_PARSE_EASYIQ_UGEPLAN, CONF_SCHOOLSCHEDULE, CONF_UGEPLAN, DOMAIN
+from .const import CONF_PARSE_EASYIQ_UGEPLAN, CONF_UGEPLAN, DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -35,52 +35,26 @@ API_CALL_SCHEMA = vol.Schema(
 )
 
 
-PARALLEL_UPDATES = 1
-
-
 async def async_setup_entry(
     hass: HomeAssistant,
-    config_entry: ConfigEntry,
+    config_entry: AulaConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Setup sensors from a config entry created in the integrations UI."""
-    config = hass.data[DOMAIN][config_entry.entry_id]
 
-    if config_entry.options:
-        config.update(config_entry.options)
-
-    client = Client(
-        config[CONF_USERNAME],
-        config[CONF_PASSWORD],
-        config[CONF_SCHOOLSCHEDULE],
-        config[CONF_UGEPLAN],
-        config[CONF_PARSE_EASYIQ_UGEPLAN],
-    )
-    hass.data[DOMAIN]["client"] = client
-
-    async def async_update_data() -> None:
-        client = hass.data[DOMAIN]["client"]
-        await hass.async_add_executor_job(client.update_data)
-
-    coordinator = DataUpdateCoordinator(
-        hass,
-        _LOGGER,
-        name="sensor",
-        update_method=async_update_data,
-        update_interval=timedelta(minutes=5),
-    )
-
-    # Immediate refresh
-    await coordinator.async_request_refresh()
+    client = config_entry.runtime_data.client
 
     entities = []
 
-    if config[CONF_UGEPLAN]:
+    if CONF_UGEPLAN in config_entry.data and config_entry.data[CONF_UGEPLAN]:
         ugeplan = True
     else:
         ugeplan = False
 
-    if config[CONF_PARSE_EASYIQ_UGEPLAN]:
+    if (
+        CONF_PARSE_EASYIQ_UGEPLAN in config_entry.data
+        and config_entry.data[CONF_PARSE_EASYIQ_UGEPLAN]
+    ):
         parse_easyiq_ugeplan = True
     else:
         parse_easyiq_ugeplan = False
@@ -95,22 +69,26 @@ async def async_setup_entry(
                     + " adding sensor entity."
                 )
                 entities.append(
-                    AulaSensor(hass, coordinator, child, ugeplan, parse_easyiq_ugeplan)
+                    AulaSensor(
+                        hass,
+                        client,
+                        config_entry.runtime_data.coordinator,
+                        child,
+                        ugeplan,
+                        parse_easyiq_ugeplan,
+                    )
                 )
         else:
             entities.append(
-                AulaSensor(hass, coordinator, child, ugeplan, parse_easyiq_ugeplan)
+                AulaSensor(
+                    hass,
+                    client,
+                    config_entry.runtime_data.coordinator,
+                    child,
+                    ugeplan,
+                    parse_easyiq_ugeplan,
+                )
             )
-    # We have data and can now set up the calendar platform:
-    if config[CONF_SCHOOLSCHEDULE]:
-        hass.async_create_task(
-            hass.config_entries.async_forward_entry_setup(config_entry, "calendar")
-        )
-    ####
-    hass.async_create_task(
-        hass.config_entries.async_forward_entry_setup(config_entry, "binary_sensor")
-    )
-    ####
 
     async_add_entities(entities, update_before_add=True)
 
@@ -143,30 +121,33 @@ async def async_setup_entry(
     )
 
 
-class AulaSensor(Entity):
+class AulaSensor(AulaEntity, SensorEntity):
     def __init__(
         self,
         hass: HomeAssistant,
+        api: Client,
         coordinator: DataUpdateCoordinator[None],
         child: dict,
         ugeplan: bool,
         parse_easyiq_ugeplan: bool,
     ) -> None:
+        childname = api._childfirstnames[AulaChildId(str(child["id"]))]
+        institution = api._institutions[AulaChildId(str(child["id"]))]
+        name = f"{institution} {childname}"
+
+        unique_id = "aula" + str(child["id"])
+        _LOGGER.debug("Unique ID for child " + str(child["id"]) + " " + unique_id)
+
+        super().__init__(api, coordinator, name, unique_id)
+
         self._hass = hass
-        self._coordinator = coordinator
         self._child = child
         self._ugeplan = ugeplan
         self._parse_easyiq_ugeplan = parse_easyiq_ugeplan
-        self._client: Client = hass.data[DOMAIN]["client"]
+        self._client = api
 
     @property
-    def name(self) -> str:
-        childname = self._client._childfirstnames[AulaChildId(str(self._child["id"]))]
-        institution = self._client._institutions[AulaChildId(str(self._child["id"]))]
-        return f"{institution} {childname}"
-
-    @property
-    def state(self) -> str:
+    def native_value(self) -> StateType:
         """
         0 = IKKE KOMMET
         1 = SYG
@@ -204,7 +185,7 @@ class AulaSensor(Entity):
             return "n/a"
 
     @property
-    def extra_state_attributes(self) -> dict[str, Any]:
+    def extra_state_attributes(self) -> dict[str, Any] | None:
         if self._client.presence[AulaChildId(str(self._child["id"]))] == 1:
             daily_info = self._client._daily_overview[
                 AulaChildId(str(self._child["id"]))
@@ -347,33 +328,3 @@ class AulaSensor(Entity):
             attributes["profilePicture"] = profilePicture
             attributes["institutionProfileId"] = daily_info["institutionProfile"]["id"]
         return attributes
-
-    @property
-    def should_poll(self) -> bool:
-        """No need to poll. Coordinator notifies entity of updates."""
-        return False
-
-    @property
-    def available(self) -> bool:
-        """Return if entity is available."""
-        return self._coordinator.last_update_success
-
-    @property
-    def unique_id(self) -> str:
-        unique_id = "aula" + str(self._child["id"])
-        _LOGGER.debug("Unique ID for child " + str(self._child["id"]) + " " + unique_id)
-        return unique_id
-
-    @property
-    def icon(self) -> str:
-        return "mdi:account-school"
-
-    async def async_update(self) -> None:
-        """Update the entity. Only used by the generic entity update service."""
-        await self._coordinator.async_request_refresh()
-
-    async def async_added_to_hass(self) -> None:
-        """When entity is added to hass."""
-        self.async_on_remove(
-            self._coordinator.async_add_listener(self.async_write_ha_state)
-        )

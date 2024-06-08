@@ -1,4 +1,4 @@
-from collections import namedtuple
+from datetime import timedelta
 
 STARTUP = r"""
                 _
@@ -27,3 +27,5 @@ CONF_PARSE_EASYIQ_UGEPLAN = "parse_easyiq_ugeplan"
 CONF_EASYIQ_UGEPLAN_CALENDAR = "easyid_ugeplan_calendar"
 EASYIQ_UGEPLAN_WEEKPLAN = "WeekPlan"
 EASYIQ_UGEPLAN_EVENTS = "Events"
+MIN_TIME_BETWEEN_UPDATES = timedelta(minutes=5)
+TIME_BETWEEN_UGEPLAN_UPDATES = timedelta(hours=1)
