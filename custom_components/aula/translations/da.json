@@ -32,7 +32,22 @@
         },
         "description": "Indtast dine Unilogin oplysninger",
         "title": "Login"
+      },
+      "reconfigure": {
+        "data": {
+          "username": "Unilogin brugernavn",
+          "password": "Unilogin password",
+          "schoolschedule": "Tilføj skoleskemaer som kalender entiteter?",
+          "ugeplan": "Tilføj ugeplaner som sensor attributter?",
+          "parse_easyiq_ugeplan": "Tilføj EasyIQ ugeplan som sensor attributter?",
+          "easyid_ugeplan_calendar": "Tilføj EasyIQ ugeplan som kalender?"
+        },
+        "description": "Indtast dine Unilogin oplysninger",
+        "title": "Login"
       }
+    },
+    "abort": {
+      "reconfigure_successful": "Reconfiguration vellykket"
     }
   },
   "entity": {

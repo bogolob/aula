@@ -32,7 +32,22 @@
         },
         "description": "Enter your Unilogin credentials",
         "title": "Authentication"
+      },
+      "reconfigure": {
+        "data": {
+          "username": "Unilogin username",
+          "password": "Unilogin password",
+          "schoolschedule": "Add school schedules as calendar entities?",
+          "ugeplan": "Add ugeplaner as sensor attributes?",
+          "parse_easyiq_ugeplan": "Split EasyIQ ugeplan into separate attributes?",
+          "easyid_ugeplan_calendar": "Add EasyIQ ugeplan to calendar?"
+        },
+        "description": "Enter your Unilogin credentials",
+        "title": "Authentication"
       }
+    },
+    "abort": {
+      "reconfigure_successful": "Reconfiguration successful"
     }
   },
   "entity": {
