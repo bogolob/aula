@@ -1,4 +1,20 @@
 {
+  "services": {
+    "api_call": {
+      "name": "API Call",
+      "description": "Make a custom API call to Aula",
+      "fields": {
+        "uri": {
+          "name": "uri",
+          "description": "URI for the call"
+        },
+        "post_data": {
+          "name": "post_data",
+          "description": "JSON formatted post data, if not defined, request will be GET"
+        }
+      }
+    }
+  },
   "config": {
     "error": {
       "1": "Unknown error",
@@ -11,46 +27,11 @@
           "password": "Unilogin password",
           "schoolschedule": "Add school schedules as calendar entities?",
           "ugeplan": "Add ugeplaner as sensor attributes?",
-          "parse_easyiq_ugeplan": "parse_easyiq_ugeplan",
-          "easyid_ugeplan_calendar": "easyid_ugeplan_calendar"
+          "parse_easyiq_ugeplan": "Split EasyIQ ugeplan into separate attributes?",
+          "easyid_ugeplan_calendar": "Add EasyIQ ugeplan to calendar?"
         },
-        "description": "Enter your Unilogin credentials...",
+        "description": "Enter your Unilogin credentials",
         "title": "Authentication"
-      },
-      "options": {
-        "data": {
-          "schoolschedule": "Add school schedules as calendar entities?",
-          "ugeplan": "Add ugeplaner as sensor attributes?",
-          "parse_easyiq_ugeplan": "parse_easyiq_ugeplan",
-          "easyid_ugeplan_calendar": "easyid_ugeplan_calendar"
-        },
-        "description": "",
-        "title": "Options"
-      }
-    }
-  },
-  "options": {
-    "error": {
-      "1": "Unknown error"
-    },
-    "step": {
-      "user": {
-        "data": {
-          "username": "Unilogin username",
-          "password": "Unilogin password"
-        },
-        "description": "Enter your Unilogin credentials...",
-        "title": "Authentication"
-      },
-      "options": {
-        "data": {
-          "schoolschedule": "Add school schedules as calendar entities?",
-          "ugeplan": "Add ugeplaner as sensor attributes?",
-          "parse_easyiq_ugeplan": "parse_easyiq_ugeplan",
-          "easyid_ugeplan_calendar": "easyid_ugeplan_calendar"
-        },
-        "description": "",
-        "title": "Options"
       }
     }
   },
