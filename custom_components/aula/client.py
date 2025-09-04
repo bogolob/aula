@@ -23,6 +23,7 @@ _LOGGER = logging.getLogger(__name__)
 
 @dataclass
 class UgeplanCalendarEvent:
+    weekday: int
     start: datetime.datetime
     end: datetime.datetime
     course: str
@@ -902,13 +903,18 @@ class Client:
                     def process_easyiq_event(easyiq_json):
                         EASYIQ_DATETIME_FORMAT = "%Y/%m/%d %H:%M"
 
+                        start_datetime = datetime.datetime.strptime(
+                            easyiq_json["start"], EASYIQ_DATETIME_FORMAT
+                        )
+
+                        end_datetime = datetime.datetime.strptime(
+                            easyiq_json["end"], EASYIQ_DATETIME_FORMAT
+                        )
+
                         return UgeplanCalendarEvent(
-                            start=datetime.datetime.strptime(
-                                easyiq_json["start"], EASYIQ_DATETIME_FORMAT
-                            ),
-                            end=datetime.datetime.strptime(
-                                easyiq_json["end"], EASYIQ_DATETIME_FORMAT
-                            ),
+                            start=start_datetime,
+                            weekday=start_datetime.weekday(),
+                            end=end_datetime,
                             course=easyiq_json["courses"],
                             description=easyiq_json["description"],
                             group=easyiq_json["activities"],
