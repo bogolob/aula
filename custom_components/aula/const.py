@@ -1,4 +1,5 @@
 from collections import namedtuple
+from enum import StrEnum
 
 STARTUP = r"""
                 _
@@ -21,6 +22,11 @@ MIN_UDDANNELSE_API = "https://api.minuddannelse.net/aula"
 MEEBOOK_API = "https://app.meebook.com/aulaapi"
 SYSTEMATIC_API = "https://systematic-momo.dk/api/aula"
 EASYIQ_API = "https://api.easyiqcloud.dk/api/aula"
+EASYIQ_NEW_API = "https://skoleportal.easyiqcloud.dk"
 CONF_SCHOOLSCHEDULE = "schoolschedule"
 CONF_UGEPLAN = "ugeplan"
 CONF_MU_OPGAVER = "mu_opgaver"
+
+
+class AulaWidgetId(StrEnum):
+    EASYIQ_UGEPLAN = "0128"

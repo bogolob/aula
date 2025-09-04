@@ -1,4 +1,4 @@
-from .const import DOMAIN
+from .const import DOMAIN, AulaWidgetId
 import logging
 from datetime import datetime, timedelta
 from homeassistant.helpers.entity import Entity
@@ -226,12 +226,14 @@ class AulaSensor(Entity):
                     ]
                 except:
                     attributes["huskelisten"] = "Not available"
+
             try:
                 attributes["ugeplan"] = self._client.ugep_attr[
                     self._child["name"].split()[0]
                 ]
             except:
                 attributes["ugeplan"] = "Not available"
+
             try:
                 attributes["ugeplan_next"] = self._client.ugepnext_attr[
                     self._child["name"].split()[0]
@@ -243,6 +245,27 @@ class AulaSensor(Entity):
                     + str(self._child["name"].split()[0])
                     + ". Perhaps not available yet."
                 )
+
+            if AulaWidgetId.EASYIQ_UGEPLAN in self._client.widgets:
+                try:
+                    attributes["ugeplan_events"] = self._client.ugep_events[
+                        self._child["name"].split()[0]
+                    ]
+                except:
+                    attributes["ugeplan_events"] = "Not available"
+
+                try:
+                    attributes["ugeplan_events_next"] = self._client.ugepnext_events[
+                        self._child["name"].split()[0]
+                    ]
+                except:
+                    attributes["ugeplan_events_next"] = "Not available"
+                    _LOGGER.debug(
+                        "Could not get EasyIQ ugeplan for next week for child "
+                        + str(self._child["name"].split()[0])
+                        + ". Perhaps not available yet."
+                    )
+
         if self._client.presence[str(self._child["id"])] == 1:
             for attribute in fields:
                 if attribute == "exitTime" and daily_info[attribute] == "23:59:00":
