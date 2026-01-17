@@ -12,19 +12,40 @@ from .const import (
     MEEBOOK_API,
     SYSTEMATIC_API,
     EASYIQ_API,
+    EASYIQ_NEW_API,
+    AulaWidgetId,
 )
 from homeassistant.exceptions import ConfigEntryNotReady, ConfigEntryAuthFailed
 from .aula_login_client.client import AulaLoginClient
 from .aula_login_client.exceptions import AulaAuthenticationError
+from dataclasses import dataclass
+from typing import NewType
 
 _LOGGER = logging.getLogger(__name__)
+
+
+@dataclass
+class UgeplanCalendarEvent:
+    weekday: int
+    start: datetime.datetime
+    end: datetime.datetime
+    course: str
+    group: str
+    description: str
+
+
+AulaChildUserId = NewType("AulaChildUserId", str)
+AulaChildFirstName = NewType("AulaChildFirstName", str)
+EasyIqApiLoginId = NewType("EasyIqApiLoginId", str)
 
 
 class Client:
     huskeliste = {}
     presence = {}
     ugep_attr = {}
+    ugep_events: dict[AulaChildFirstName, list[UgeplanCalendarEvent]] = {}
     ugepnext_attr = {}
+    ugepnext_events: dict[AulaChildFirstName, list[UgeplanCalendarEvent]] = {}
     mu_opgaver_attr = {}
     mu_opgaver_next_attr = {}
     widgets = {}
@@ -618,9 +639,10 @@ class Client:
                 and "0004" not in self.widgets
                 and "0062" not in self.widgets
                 and "0001" not in self.widgets
+                and AulaWidgetId.EASYIQ_UGEPLAN not in self.widgets
             ):
                 _LOGGER.error(
-                    "You have enabled ugeplaner, but we cannot find any supported widgets (0029,0004,0001) in Aula."
+                    f"You have enabled ugeplaner, but we cannot find any supported widgets (0029,0004,0001) in Aula. Widgets found: {self.widgets}"
                 )
             if "0029" in self.widgets and "0004" in self.widgets:
                 _LOGGER.warning(
@@ -973,6 +995,178 @@ class Client:
                                 self.ugep_attr[name] = ugep
                             elif thisnext == "next":
                                 self.ugepnext_attr[name] = ugep
+
+                # New EasyIQ Ugeplan
+                if AulaWidgetId.EASYIQ_UGEPLAN in self.widgets:
+                    import calendar, uuid
+                    from pyquery import PyQuery as pq
+
+                    # scraper = cloudscraper.create_scraper()
+
+                    _LOGGER.debug("In the New EasyIQ flow")
+                    token = self.get_token(AulaWidgetId.EASYIQ_UGEPLAN)
+                    csrf_token = self._session.cookies.get_dict()["Csrfp-Token"]
+
+                    widget_instance_id = uuid.uuid4()
+
+                    easyiq_headers = {
+                        "X-InstitutionFilter": str(self._institutionProfiles[0]),
+                        "X-Login": guardian,
+                        "X-UserProfile": "guardian",
+                        "X-ChildFilter": childUserIds,
+                        "X-WidgetInstanceId": str(widget_instance_id),
+                        "X-Requested-With": "XMLHttpRequest",
+                        # "Authorization": token,
+                        # "Accept": "application/json",
+                        # "Origin": "https://skoleportal.easyiqcloud.dk",
+                        # "Referer": "https://skoleportal.easyiqcloud.dk/",
+                        "accept": "*/*",
+                        "accept-language": "en-US,en;q=0.9,da;q=0.8",
+                        "authorization": token,
+                        "content-length": "0",
+                        "origin": "https://skoleportal.easyiqcloud.dk",
+                        "pragma": "no-cache",
+                        "priority": "u=1, i",
+                        "referer": "https://skoleportal.easyiqcloud.dk/UgeplanWidget",
+                        "request-id": "",
+                        "sec-ch-ua": '"Not;A=Brand";v="99", "Google Chrome";v="139", "Chromium";v="139"',
+                        "sec-ch-ua-mobile": "?0",
+                        "sec-ch-ua-platform": '"Windows"',
+                        "sec-fetch-dest": "empty",
+                        "sec-fetch-mode": "cors",
+                        "sec-fetch-site": "same-origin",
+                        "sec-fetch-storage-access": "active",
+                        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36",
+                    }
+
+                    this_week = datetime.datetime.now().strftime(
+                        "%Y-%m-%dT00:00:00.000Z"
+                    )
+                    next_week = (
+                        datetime.datetime.now() + datetime.timedelta(weeks=1)
+                    ).strftime("%Y-%m-%dT00:00:00.000Z")
+
+                    def process_easyiq_event(easyiq_json):
+                        EASYIQ_DATETIME_FORMAT = "%Y/%m/%d %H:%M"
+
+                        start_datetime = datetime.datetime.strptime(
+                            easyiq_json["start"], EASYIQ_DATETIME_FORMAT
+                        )
+
+                        end_datetime = datetime.datetime.strptime(
+                            easyiq_json["end"], EASYIQ_DATETIME_FORMAT
+                        )
+
+                        return UgeplanCalendarEvent(
+                            start=start_datetime,
+                            weekday=start_datetime.weekday(),
+                            end=end_datetime,
+                            course=easyiq_json["courses"],
+                            description=easyiq_json["description"],
+                            group=easyiq_json["activities"],
+                        )
+
+                    def retrieve_week_details(login_id: EasyIqApiLoginId, date: str):
+                        # Retrieving the base class for the student
+                        content_response = requests.get(
+                            EASYIQ_NEW_API + "/Dashboard/Content",
+                            headers=child_easyid_headers,
+                        )
+
+                        content_response_html = pq(content_response.text)
+                        base_activity = content_response_html("#StudentBaseClass").attr(
+                            "value"
+                        )
+
+                        # Retrieving week plan for the week
+                        week_plan_params = {
+                            "loginId": login_id,
+                            "date": date,
+                            "activityFilter": base_activity,
+                        }
+
+                        week_plan_response = requests.get(
+                            EASYIQ_NEW_API + "/Calendar/WeekPlan",
+                            headers=child_easyid_headers,
+                            params=week_plan_params,
+                        )
+
+                        _LOGGER.debug(
+                            f"GetWeekPlan response: {week_plan_response.status_code} {week_plan_response.text}"
+                        )
+
+                        week_plan_response_json = week_plan_response.json()
+
+                        if len(week_plan_response_json["weekPlans"]) > 0:
+                            week_plan_text = str(
+                                week_plan_response_json["weekPlans"][0]["text"]
+                            )
+                        else:
+                            week_plan_text = ""
+
+                        # Retrieving events for the week
+                        get_weekplan_events_params = {
+                            "loginId": login_id,
+                            "date": date,
+                            "courseFilter": -1,
+                            "textFilter": "",
+                            "ownWeekPlan": "false",
+                            "activityFilter": base_activity,
+                        }
+
+                        week_plan_events_response = requests.get(
+                            EASYIQ_NEW_API + "/Calendar/CalendarGetWeekplanEvents",
+                            headers=child_easyid_headers,
+                            params=get_weekplan_events_params,
+                        )
+
+                        _LOGGER.debug(
+                            f"GetWeekplanEvents response: {week_plan_events_response.status_code} {week_plan_events_response.text}"
+                        )
+
+                        raw_events = week_plan_events_response.json()
+
+                        return week_plan_text, [
+                            process_easyiq_event(event) for event in raw_events
+                        ]
+
+                    for child in self._childrenFirstNamesAndUserIDs.items():
+                        child_user_id = AulaChildUserId(child[0])
+                        first_name = AulaChildFirstName(child[1])
+
+                        child_easyid_headers = easyiq_headers | {
+                            "X-Child": child_user_id
+                        }
+
+                        # Authenticate AULA user
+                        _LOGGER.debug(
+                            f"Authenticating AULA user with headers {child_easyid_headers}"
+                        )
+                        post_data = {}
+
+                        auth_info_response = requests.post(
+                            EASYIQ_NEW_API + "/Aula/AuthenticateAulaUser",
+                            headers=child_easyid_headers,
+                            json=post_data,
+                        )
+
+                        _LOGGER.debug(
+                            f"AuthenticateAulaUser response: {auth_info_response.status_code} {auth_info_response.text}"
+                        )
+
+                        login_id = EasyIqApiLoginId(
+                            auth_info_response.json()["loginId"]
+                        )
+
+                        if thisnext == "this":
+                            self.ugep_attr[child[1]], self.ugep_events[child[1]] = (
+                                retrieve_week_details(login_id, this_week)
+                            )
+                        else:
+                            (
+                                self.ugepnext_attr[child[1]],
+                                self.ugepnext_events[child[1]],
+                            ) = retrieve_week_details(login_id, next_week)
 
             now = datetime.datetime.now() + datetime.timedelta(weeks=1)
             thisweek = datetime.datetime.now().strftime("%Y-W%V")

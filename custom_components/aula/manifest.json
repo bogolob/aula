@@ -17,7 +17,8 @@
         "josepy==1.15.0",
         "pycryptodome>=3.19.0",
         "qrcode>=7.4.0",
-        "requests>=2.31.0"
+        "requests>=2.31.0",
+        "pyquery==2.0.0"
     ],
-    "version": "0.1.52"
+    "version": "0.5.0"
 }
