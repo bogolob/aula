@@ -26,6 +26,7 @@ EASYIQ_NEW_API = "https://skoleportal.easyiqcloud.dk"
 CONF_SCHOOLSCHEDULE = "schoolschedule"
 CONF_UGEPLAN = "ugeplan"
 CONF_MU_OPGAVER = "mu_opgaver"
+CONF_TEACHER_FULL_NAME = "teacher_full_name"
 
 # Authentication method constants
 CONF_MITID_USERNAME = "mitid_username"

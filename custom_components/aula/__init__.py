@@ -93,6 +93,9 @@ async def async_setup_entry(
         # Ensure session is initialized with tokens by calling login which now handles validation
         await hass.async_add_executor_job(client.login)
 
+    # Fetch initial data before setting up platforms
+    await hass.async_add_executor_job(client.update_data)
+
     await hass.config_entries.async_forward_entry_setups(
         entry, ["sensor", "binary_sensor"]
     )
@@ -123,16 +126,15 @@ async def async_unload_entry(
     hass: core.HomeAssistant, entry: config_entries.ConfigEntry
 ) -> bool:
     """Unload a config entry."""
-    unload_ok = all(
-        await asyncio.gather(
-            *[hass.config_entries.async_forward_entry_unload(entry, "sensor")]
-        )
-    )
-    # Remove options_update_listener.
-    hass.data[DOMAIN][entry.entry_id]["unsub_options_update_listener"]()
+    # Unload all platforms that may have been set up
+    platforms_to_unload = ["sensor", "binary_sensor", "calendar"]
+    unload_ok = await hass.config_entries.async_unload_platforms(entry, platforms_to_unload)
 
-    # Remove config entry from domain.
-    if unload_ok:
-        hass.data[DOMAIN].pop(entry.entry_id)
+    # Remove options_update_listener.
+    if entry.entry_id in hass.data.get(DOMAIN, {}):
+        hass.data[DOMAIN][entry.entry_id]["unsub_options_update_listener"]()
+        # Remove config entry from domain.
+        if unload_ok:
+            hass.data[DOMAIN].pop(entry.entry_id)
 
     return unload_ok
