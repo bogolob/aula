@@ -20,5 +20,9 @@
         "requests>=2.31.0",
         "pyquery==2.0.0"
     ],
+<<<<<<< HEAD
     "version": "0.5.1"
+=======
+    "version": "0.1.56"
+>>>>>>> upstream/main
 }
